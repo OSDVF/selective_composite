@@ -1,4 +1,5 @@
 import cv from '@techstark/opencv-js'
+import { mat3 } from 'gl-matrix'
 
 export enum DetectorType {
     AKAZE, ORB
@@ -11,6 +12,7 @@ export class Renderer {
     vert: WebGLShader;
     showImage: WebGLShader;
     program: WebGLProgram;
+    projections: number[][] = [];
 
     attribs: {
         position: number,
@@ -21,6 +23,8 @@ export class Renderer {
     };
     uniforms: {
         image: WebGLUniformLocation,
+        projection: WebGLUniformLocation | null,
+        size: WebGLUniformLocation,
     };
 
     images: HTMLImageElement[] = [];
@@ -79,6 +83,7 @@ export class Renderer {
         void main() {
             gl_Position = vec4(position, 0, 1);
             v_texcoord = texcoord;
+            v_texcoord.y = 1.0 - v_texcoord.y;
         }
     `);
 
@@ -89,11 +94,22 @@ export class Renderer {
         this.showImage = this.checkError(showImage);
         this.c.shaderSource(this.showImage, `
         precision mediump float;
+
         uniform sampler2D image;
+        uniform vec2 size;
         varying vec2 v_texcoord;
+ 
+        uniform highp mat3 projection; 
 
         void main() {
-            gl_FragColor = texture2D(image, v_texcoord);
+            highp vec3 frameCoordinate = vec3(v_texcoord * size, 1.0); 
+            highp vec3 trans = projection * frameCoordinate; 
+            highp vec2 coords = (trans.xy/size) / trans.z; 
+            if (coords.x < 0.0 || coords.x > 1.0 || coords.y < 0.0 || coords.y > 1.0) {
+                discard;
+            }
+
+            gl_FragColor = texture2D(image, coords);
         }
     `);
 
@@ -115,8 +131,13 @@ export class Renderer {
         };
 
         const image = this.c.getUniformLocation(this.program, 'image');
+        const projection = this.c.getUniformLocation(this.program, 'projection');
+        this.checkError();
+        const size = this.c.getUniformLocation(this.program, 'size');
         this.uniforms = {
             image: this.checkError(image),
+            projection: projection,
+            size: this.checkError(size),
         };
 
 
@@ -201,9 +222,8 @@ export class Renderer {
                         this.c.texParameteri(this.c.TEXTURE_2D, this.c.TEXTURE_WRAP_T, this.c.CLAMP_TO_EDGE);
                         this.checkError();
                     }
-                    if (i == 0) {
-                        this.c.texImage2D(this.c.TEXTURE_2D, 0, this.c.RGBA, this.c.RGBA, this.c.UNSIGNED_BYTE, this.images[i]);
-                    }
+
+                    this.c.texImage2D(this.c.TEXTURE_2D, 0, this.c.RGBA, this.c.RGBA, this.c.UNSIGNED_BYTE, this.images[i]);
 
                     if (i == 0) {// baseline image is cached early, others are after their features are matched
                         this.cacheSrcs[i] = this.images[0].src.substring(0, 100);
@@ -236,10 +256,6 @@ export class Renderer {
                 }
             }
 
-            // compute the scale for the processed vs the original image
-            const scale0 = Math.min(this.detectorWidthLimit / this.images[0].naturalWidth, 1)
-            const scale1 = Math.min(this.detectorWidthLimit / im.naturalWidth, 1)
-
             const points1 = [];
             const points2 = [];
             for (let j = 0; j < good_matches.size(); j++) {
@@ -254,24 +270,19 @@ export class Renderer {
             const mat2 = new cv.Mat(points2.length, 1, cv.CV_32FC2);
             mat2.data32F.set(points2);
 
-            const h = cv.findHomography(mat2, mat1, cv.RANSAC);
+            const h = cv.findHomography(mat1, mat2, cv.RANSAC);
 
             if (h.empty() || isNaN(h.data64F[0])) {
                 alert("Could not align image onto baseline automatically");
             }
             else {
-                const proxy = this.images[i].cloneNode() as HTMLImageElement
-                proxy.width = proxy.naturalWidth
-                proxy.height = proxy.naturalHeight
-                const source = cv.imread(proxy)
-                proxy.remove()
-                
-                cv.warpPerspective(source, source, h, new cv.Size(source.cols, source.rows))
-
-                this.c.bindTexture(this.c.TEXTURE_2D, this.imageTextures[i]);
-                // OpenCV to WebGL texture
-                this.c.texImage2D(this.c.TEXTURE_2D, 0, this.c.RGBA, this.c.RGBA, this.c.UNSIGNED_BYTE, new ImageData(new Uint8ClampedArray(source.data), source.cols, source.rows));
-                source.delete()
+                this.projections[i] =
+                    //transpose 
+                    [
+                        h.data64F[0], h.data64F[3], h.data64F[6],
+                        h.data64F[1], h.data64F[4], h.data64F[7],
+                        h.data64F[2], h.data64F[5], h.data64F[8]
+                    ];
 
                 console.log("h:", h);
                 console.log("[", h.data64F[0], ",", h.data64F[1], ",", h.data64F[2], "]");
@@ -341,6 +352,20 @@ export class Renderer {
         this.checkError();
         this.c.uniform1i(this.uniforms.image, 0);
         this.checkError();
+        // compute the dimensions used for the computation
+        const width = Math.min(this.images[i].naturalWidth, this.detectorWidthLimit);
+        const height = this.images[i].naturalHeight * (width / this.images[i].naturalWidth);
+
+        this.c.uniform2f(this.uniforms.size, width, height);
+        this.checkError();
+
+        const m = this.projections[i]
+        if (m) {
+            this.c.uniformMatrix3fv(this.uniforms.projection, false, m);
+        } else {
+            const mat = mat3.create();
+            this.c.uniformMatrix3fv(this.uniforms.projection, false, mat);
+        }
 
         this.c.drawArrays(this.c.TRIANGLES, 0, 6);
         this.checkError();
