@@ -1,0 +1,28 @@
+{
+  "name": "selective_composite",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@iconify/vue": "^4.1.2",
+    "@techstark/opencv-js": "^4.9.0-release.3",
+    "gl-matrix": "^3.4.3",
+    "path-browserify": "^1.0.1",
+    "pinia": "^2.1.7",
+    "string-to-color": "^2.2.2",
+    "vue": "^3.4.21"
+  },
+  "devDependencies": {
+    "@types/path-browserify": "^1.0.2",
+    "@vitejs/plugin-vue": "^5.0.4",
+    "sass": "^1.75.0",
+    "typescript": "^5.2.2",
+    "vite": "^5.2.0",
+    "vue-tsc": "^2.0.6"
+  }
+}
