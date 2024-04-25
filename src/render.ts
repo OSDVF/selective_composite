@@ -1,14 +1,24 @@
 import cv from '@techstark/opencv-js'
 import { mat3 } from 'gl-matrix'
+import showImageFrag from './shaders/showImage.frag?raw'
+import simpleVert from './shaders/simple.vert?raw'
+import paintFrag from './shaders/paint.frag?raw'
+import 'webgl-lint'
 
 export enum DetectorType {
-    AKAZE, ORB
+    AKAZE, ORB, ORBHarris
 }
+
+export type DetectorOptions = {
+    knnDistance: number,
+    widthLimit?: number,
+    maxFeatures?: number,
+}
+
 export class Renderer {
     brushSize = 2;
     c: WebGLRenderingContext;
     detectorType = DetectorType.AKAZE;
-    detectorWidthLimit = 800;
     vert: WebGLShader;
     showImage: WebGLShader;
     paintShader: WebGLShader;
@@ -26,22 +36,30 @@ export class Renderer {
     };
     uniforms: {
         image: WebGLUniformLocation,
+        // textures
         paint: WebGLUniformLocation,
+        backPaint: WebGLUniformLocation,
         projection: WebGLUniformLocation | null,
         size: WebGLUniformLocation,
+        // colors
         paintColor: WebGLUniformLocation,
+        eraser: WebGLUniformLocation,
+        // paint program uniforms
+        backPaintColor: WebGLUniformLocation,
         radius: WebGLUniformLocation,
         position: WebGLUniformLocation,
     };
 
     images: HTMLImageElement[] = [];
     imageTextures: WebGLTexture[] = [];
-    paintTextures: WebGLTexture[] = [];
-    strokeTextures: WebGLTexture[] = [];
+    foregroundStrokeTextures: WebGLTexture[] = [];
+    backgroundStrokeTextures: WebGLTexture[] = [];
 
     /// -1 renders the whole composite, otherwise only single image is rendered
     selected: number = -1;
-    selectedColor: number[] = [0, 0, 0];
+    paintColor: number[] = [0, 0, 0];
+    backPaintColor: number[] = [0, 0, 0];
+    erase = false;
 
     keypoints: cv.KeyPointVector[] = [];
     descriptors: cv.Mat[] = [];
@@ -49,7 +67,11 @@ export class Renderer {
     // Index for checking if feature points are already calculated
     cacheSrcs: string[] = [];
 
-    knnDistance_option = 0.7;
+    detectorOptions: DetectorOptions = {
+        knnDistance: 0.7,
+        widthLimit: 800,
+        maxFeatures: 200,
+    };
 
     debugCanvas: HTMLCanvasElement | null = null;
 
@@ -83,62 +105,20 @@ export class Renderer {
 
         const vert = this.c.createShader(this.c.VERTEX_SHADER);
         this.vert = this.checkError(vert);
-        this.c.shaderSource(this.vert, `
-        attribute vec2 position;
-        attribute vec2 texcoord;
-
-        varying vec2 v_texcoord;
-        void main() {
-            gl_Position = vec4(position, 0, 1);
-            v_texcoord = texcoord;
-        }
-    `);
+        this.c.shaderSource(this.vert, simpleVert);
 
         this.checkShaderCompile(this.vert);
 
         const showImage = this.c.createShader(this.c.FRAGMENT_SHADER);
         this.checkError();
         this.showImage = this.checkError(showImage);
-        this.c.shaderSource(this.showImage, `
-            precision mediump float;
-
-            uniform sampler2D image;
-            uniform sampler2D paint;
-            uniform vec3 paintColor;
-            uniform vec2 size;
-            varying vec2 v_texcoord;
-    
-            uniform highp mat3 projection; 
-
-            void main() {
-                highp vec3 frameCoordinate = vec3(v_texcoord * size, 1.0); 
-                highp vec3 trans = projection * frameCoordinate; 
-                highp vec2 coords = (trans.xy/size) / trans.z; 
-                if (coords.x < 0.0 || coords.x > 1.0 || coords.y < 0.0 || coords.y > 1.0) {
-                    discard;
-                }
-
-                gl_FragColor = vec4(mix(texture2D(image, coords).rgb, paintColor, texture2D(paint, v_texcoord).r * 0.5), 1.0);
-            }
-        `);
+        this.c.shaderSource(this.showImage, showImageFrag);
         this.checkShaderCompile(this.showImage);
 
         const paintShader = this.c.createShader(this.c.FRAGMENT_SHADER);
         this.checkError();
         this.paintShader = this.checkError(paintShader);
-        this.c.shaderSource(this.paintShader, `
-            precision mediump float;
-            uniform float radius;
-            uniform vec2 position;
-
-            void main() {
-                float dist = distance(gl_FragCoord.xy, position);
-                if (dist > radius) {
-                    discard;
-                }
-                gl_FragColor = vec4(1.0);
-            }
-        `);
+        this.c.shaderSource(this.paintShader, paintFrag);
         this.checkShaderCompile(this.paintShader);
 
         const program = this.c.createProgram();
@@ -172,7 +152,10 @@ export class Renderer {
             projection: projection,
             size: this.checkError(size),
             paint: this.checkError(this.c.getUniformLocation(this.program, 'paint')),
+            backPaint: this.checkError(this.c.getUniformLocation(this.program, 'backPaint')),
             paintColor: this.checkError(this.c.getUniformLocation(this.program, 'paintColor')),
+            backPaintColor: this.checkError(this.c.getUniformLocation(this.program, 'backPaintColor')),
+            eraser: this.checkError(this.c.getUniformLocation(this.paintProgram, 'eraser')),
             radius: this.checkError(this.c.getUniformLocation(this.paintProgram, 'radius')),
             position: this.checkError(this.c.getUniformLocation(this.paintProgram, 'position')),
         };
@@ -204,34 +187,29 @@ export class Renderer {
         this.checkError();
     }
 
-    paint(x: number, y: number) {
+    paint(x: number, y: number, background: boolean) {
         if (this.selected <= 0) {
             return;
         }
         this.c.bindFramebuffer(this.c.FRAMEBUFFER, this.buffers.paint);
-        this.checkError();
-        this.c.framebufferTexture2D(this.c.FRAMEBUFFER, this.c.COLOR_ATTACHMENT0, this.c.TEXTURE_2D, this.paintTextures[this.selected], 0);
+        this.c.framebufferTexture2D(this.c.FRAMEBUFFER,
+            this.c.COLOR_ATTACHMENT0,
+            this.c.TEXTURE_2D,
+            (background ? this.backgroundStrokeTextures : this.foregroundStrokeTextures)[this.selected], 0
+        );
         this.checkError();
         this.c.viewport(0, 0, this.images[this.selected].naturalWidth, this.images[this.selected].naturalHeight);
-        this.checkError();
         this.c.useProgram(this.paintProgram);
-        this.checkError();
         this.c.bindBuffer(this.c.ARRAY_BUFFER, this.buffers.fullScreenQuad);
-        this.checkError();
         this.c.enableVertexAttribArray(this.attribs.position);
-        this.checkError();
         this.c.vertexAttribPointer(this.attribs.position, 2, this.c.FLOAT, false, 4 * 4, 0);
-        this.checkError();
         this.c.enableVertexAttribArray(this.attribs.texcoord);
-        this.checkError();
         this.c.vertexAttribPointer(this.attribs.texcoord, 2, this.c.FLOAT, false, 4 * 4, 2 * 4);
-        this.checkError();
 
         this.c.uniform1f(this.uniforms.radius, this.brushSize);
-        this.checkError();
         const canvasScale = this.images[this.selected].naturalWidth / this.c.canvas.width;
         this.c.uniform2f(this.uniforms.position, x * canvasScale, y * canvasScale);
-        this.checkError();
+        this.c.uniform1i(this.uniforms.eraser, this.erase ? 1 : 0);
         this.c.drawArrays(this.c.TRIANGLES, 0, 6);
 
         this.render()
@@ -245,7 +223,7 @@ export class Renderer {
             if (!cached || this.debugCanvas) {
                 // proxy width and height to naturalWidth and naturalHeight
                 const proxy = this.images[i].cloneNode() as HTMLImageElement
-                proxy.width = Math.min(proxy.naturalWidth, this.detectorWidthLimit)
+                proxy.width = Math.min(proxy.naturalWidth, this.detectorOptions.widthLimit ?? proxy.naturalWidth)
                 // aspect ratio scale
                 proxy.height = proxy.naturalHeight * (proxy.width / proxy.naturalWidth)
                 const data = cv.imread(proxy)
@@ -263,7 +241,7 @@ export class Renderer {
                     const keypoints = new cv.KeyPointVector();
                     const descriptors = new cv.Mat();
 
-                    const detector = new (cv as any)[this.detectorType === DetectorType.AKAZE ? 'AKAZE' : 'ORB']();
+                    const detector: cv.Feature2D = this.detectorType === DetectorType.AKAZE ? new (cv as any).AKAZE() : new cv.ORB(this.detectorOptions.maxFeatures, undefined, undefined, undefined, undefined, undefined, this.detectorType == DetectorType.ORB ? (cv as any).FAST_SCORE : undefined);
                     detector.detectAndCompute(gray, new cv.Mat(), keypoints, descriptors);
                     detector.delete();
 
@@ -282,16 +260,27 @@ export class Renderer {
                     this.descriptors[i] = descriptors;
 
                     if (!this.imageTextures[i]) {
-                        const tex = this.c.createTexture();
-                        this.imageTextures[i] = this.checkError(tex);
-                        this.c.bindTexture(this.c.TEXTURE_2D, tex);
+                        const imTex = this.c.createTexture();
+                        const im = this.images[i]
+                        this.imageTextures[i] = this.checkError(imTex);
+                        this.c.bindTexture(this.c.TEXTURE_2D, imTex);
                         this.checkError();
 
-                        this.c.texParameteri(this.c.TEXTURE_2D, this.c.TEXTURE_MIN_FILTER, this.c.LINEAR);
-                        this.c.texParameteri(this.c.TEXTURE_2D, this.c.TEXTURE_MAG_FILTER, this.c.LINEAR);
-                        this.c.texParameteri(this.c.TEXTURE_2D, this.c.TEXTURE_WRAP_S, this.c.CLAMP_TO_EDGE);
-                        this.c.texParameteri(this.c.TEXTURE_2D, this.c.TEXTURE_WRAP_T, this.c.CLAMP_TO_EDGE);
-                        this.checkError();
+                        // create render target for painting
+                        if (!this.foregroundStrokeTextures[i] && (import.meta.hot || i != 0)) {
+                            const paint = this.c.createTexture();
+                            this.foregroundStrokeTextures[i] = this.checkError(paint);
+                            const backPaint = this.c.createTexture();
+                            this.backgroundStrokeTextures[i] = this.checkError(backPaint);
+                        }
+                        for (const tex of [this.foregroundStrokeTextures[i], this.backgroundStrokeTextures[i], imTex]) {
+                            this.c.bindTexture(this.c.TEXTURE_2D, tex);
+                            this.c.texImage2D(this.c.TEXTURE_2D, 0, this.c.RGB, im.naturalWidth, im.naturalHeight, 0, this.c.RGB, this.c.UNSIGNED_SHORT_5_6_5, null);
+                            this.c.texParameteri(this.c.TEXTURE_2D, this.c.TEXTURE_MIN_FILTER, this.c.LINEAR);
+                            this.c.texParameteri(this.c.TEXTURE_2D, this.c.TEXTURE_MAG_FILTER, this.c.LINEAR);
+                            this.c.texParameteri(this.c.TEXTURE_2D, this.c.TEXTURE_WRAP_S, this.c.CLAMP_TO_EDGE);
+                            this.c.texParameteri(this.c.TEXTURE_2D, this.c.TEXTURE_WRAP_T, this.c.CLAMP_TO_EDGE);
+                        }
                     }
 
                     this.c.texImage2D(this.c.TEXTURE_2D, 0, this.c.RGBA, this.c.RGBA, this.c.UNSIGNED_BYTE, this.images[i]);
@@ -311,23 +300,6 @@ export class Renderer {
             } else {
                 this.cacheSrcs[i] = im.src.substring(0, 100);
             }
-            // create render target for painting
-            if (!this.paintTextures[i]) {
-                const paint = this.c.createTexture();
-                this.paintTextures[i] = this.checkError(paint);
-            }
-            this.c.bindTexture(this.c.TEXTURE_2D, this.paintTextures[i]);
-            this.checkError();
-            this.c.texImage2D(this.c.TEXTURE_2D, 0, this.c.RGB, im.naturalWidth, im.naturalHeight, 0, this.c.RGB, this.c.UNSIGNED_SHORT_5_6_5, null);
-            this.checkError();
-            this.c.texParameteri(this.c.TEXTURE_2D, this.c.TEXTURE_MIN_FILTER, this.c.LINEAR);
-            this.checkError();
-            this.c.texParameteri(this.c.TEXTURE_2D, this.c.TEXTURE_MAG_FILTER, this.c.LINEAR);
-            this.checkError();
-            this.c.texParameteri(this.c.TEXTURE_2D, this.c.TEXTURE_WRAP_S, this.c.CLAMP_TO_EDGE);
-            this.checkError();
-            this.c.texParameteri(this.c.TEXTURE_2D, this.c.TEXTURE_WRAP_T, this.c.CLAMP_TO_EDGE);
-            this.checkError();
 
             const good_matches = new cv.DMatchVector();
 
@@ -340,7 +312,7 @@ export class Renderer {
                 let match = matches.get(j);
                 let dMatch1 = match.get(0);
                 let dMatch2 = match.get(1);
-                if (dMatch1.distance <= dMatch2.distance * this.knnDistance_option) {
+                if (dMatch1.distance <= dMatch2.distance * this.detectorOptions.knnDistance) {
                     good_matches.push_back(dMatch1);
                 }
             }
@@ -359,9 +331,9 @@ export class Renderer {
             const mat2 = new cv.Mat(points2.length, 1, cv.CV_32FC2);
             mat2.data32F.set(points2);
 
-            let h: cv.Mat|null = null;
+            let h: cv.Mat | null = null;
             try {
-                 h = cv.findHomography(mat1, mat2, cv.RANSAC);
+                h = cv.findHomography(mat1, mat2, cv.RANSAC);
             } catch (e) {
                 console.error(e);
             }
@@ -402,72 +374,64 @@ export class Renderer {
 
     clear() {
         this.c.viewport(0, 0, this.c.canvas.width, this.c.canvas.height);
-        this.checkError();
+        this.checkError()
         this.c.clearColor(0, 0, 0, 1);
-        this.checkError();
+        this.checkError()
         this.c.clear(this.c.COLOR_BUFFER_BIT);
-        this.checkError();
+        this.checkError()
     }
 
     render() {
         this.c.bindFramebuffer(this.c.FRAMEBUFFER, null);
+        this.checkError()
         this.clear()
 
         this.c.useProgram(this.program);
-        this.checkError();
+        this.checkError()
 
         this.c.bindBuffer(this.c.ARRAY_BUFFER, this.buffers.fullScreenQuad);
-        this.checkError();
+        this.checkError()
 
         this.c.enableVertexAttribArray(this.attribs.position);
-        this.checkError();
         this.c.vertexAttribPointer(this.attribs.position, 2, this.c.FLOAT, false, 4 * 4, 0);
-        this.checkError();
         this.c.enableVertexAttribArray(this.attribs.texcoord);
-        this.checkError();
         this.c.vertexAttribPointer(this.attribs.texcoord, 2, this.c.FLOAT, false, 4 * 4, 2 * 4);
-        this.checkError();
 
         if (this.selected == -1) {
             for (let i = 0; i < this.imageTextures.length; i++) {
                 this.renderImage(i, false)
             }
-        } else {
+        } else if(this.images[this.selected]) {
             this.renderImage(this.selected, true)
         }
+        this.checkError();
 
     }
 
     private renderImage(i: number, renderPaint: boolean) {
         this.c.activeTexture(this.c.TEXTURE0);
-        this.checkError();
         this.c.bindTexture(this.c.TEXTURE_2D, this.imageTextures[i]);
-        this.checkError();
+        this.checkError()
         this.c.uniform1i(this.uniforms.image, 0);
-        this.checkError();
-        if (renderPaint && i != 0) {
-            this.c.activeTexture(this.c.TEXTURE1);
-            this.checkError();
-            this.c.bindTexture(this.c.TEXTURE_2D, this.paintTextures[i]);
-            this.checkError();
-            this.c.uniform3f(this.uniforms.paintColor, this.selectedColor[0], this.selectedColor[1], this.selectedColor[2]);
+        this.c.activeTexture(this.c.TEXTURE1);
+        this.c.bindTexture(this.c.TEXTURE_2D, this.foregroundStrokeTextures[i]);
+        this.c.activeTexture(this.c.TEXTURE2);
+        this.c.bindTexture(this.c.TEXTURE_2D, this.backgroundStrokeTextures[i]);
+        if (renderPaint) {
+            this.c.uniform3f(this.uniforms.paintColor, this.paintColor[0], this.paintColor[1], this.paintColor[2]);
+            this.c.uniform3f(this.uniforms.backPaintColor, this.backPaintColor[0], this.backPaintColor[1], this.backPaintColor[2]);
         } else {
-            this.c.activeTexture(this.c.TEXTURE1);
-            this.checkError();
-            this.c.bindTexture(this.c.TEXTURE_2D, null);
-            this.checkError();
             this.c.uniform3f(this.uniforms.paintColor, 0, 0, 0);
-            this.checkError();
+            this.c.uniform3f(this.uniforms.backPaintColor, 0, 0, 0);
         }
         this.c.uniform1i(this.uniforms.paint, 1);
-        this.checkError();
+        this.c.uniform1i(this.uniforms.backPaint, 2);
 
         // compute the dimensions used for the computation
-        const width = Math.min(this.images[i].naturalWidth, this.detectorWidthLimit);
+        const width = Math.min(this.images[i].naturalWidth, this.detectorOptions.widthLimit ?? this.images[i].naturalWidth);
         const height = this.images[i].naturalHeight * (width / this.images[i].naturalWidth);
 
         this.c.uniform2f(this.uniforms.size, width, height);
-        this.checkError();
 
         const m = this.projections[i]
         if (m) {
@@ -478,6 +442,5 @@ export class Renderer {
         }
 
         this.c.drawArrays(this.c.TRIANGLES, 0, 6);
-        this.checkError();
     }
 }

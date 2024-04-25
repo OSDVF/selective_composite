@@ -16,7 +16,7 @@ import { Renderer } from '../render';
 import cvLib from '@techstark/opencv-js'
 
 const state = useState();
-const { images, selectedDetector, selectedImage, selectedResult, computing, maxDetectorWidth, initialized, brushSize } = storeToRefs(state);
+const { eraser, images, selectedDetector, selectedImage, selectedResult, computing, detectorOptions, initialized, brushSize } = storeToRefs(state);
 const cv = new Promise<void>((resolve) => {
     cvLib.onRuntimeInitialized = () => {
         console.log('OpenCV.js is ready');
@@ -54,13 +54,17 @@ watch(selectedColor, (newColor) => {
     if (!renderer.value) {
         return;
     }
-    renderer.value.selectedColor = newColor
+    renderer.value.paintColor = newColor
 })
 watch(brushSize, (newSize) => {
     if (!renderer.value) {
         return;
     }
     renderer.value.brushSize = newSize
+})
+watch(eraser, (e) => {
+    if (!renderer.value) return
+    renderer.value.erase = e
 })
 
 function paint(event: MouseEvent | Touch) {
@@ -69,7 +73,7 @@ function paint(event: MouseEvent | Touch) {
     }
 
     const rect = canvas.value!.getBoundingClientRect();
-    renderer.value.paint(event.clientX - rect.left, event.clientY - rect.top);
+    renderer.value.paint(event.clientX - rect.left, event.clientY - rect.top, !state.brushForeground);
 }
 
 function passStateToRenderer() {
@@ -77,11 +81,10 @@ function passStateToRenderer() {
     renderer.value!.images = images.value;
     renderer.value!.selected = selectedImage.value;
     renderer.value!.detectorType = selectedDetector.value;
-    renderer.value!.detectorWidthLimit = maxDetectorWidth.value;
+    renderer.value!.detectorOptions = detectorOptions.value;
     renderer.value!.brushSize = brushSize.value;
-    renderer.value!.selectedColor = selectedColor.value;
-
-    console.log("State passed to renderer", images.value, selectedImage.value, selectedDetector.value)
+    renderer.value!.paintColor = selectedColor.value;
+    renderer.value!.erase = eraser.value
 }
 
 onMounted(() => {// also called when hot reloading
@@ -198,9 +201,9 @@ watch(selectedDetector, () => {
         renderer.value.detectorType = selectedDetector.value
 })
 
-watch(maxDetectorWidth, () => {
+watch(detectorOptions, () => {
     if (renderer.value)
-        renderer.value.detectorWidthLimit = maxDetectorWidth.value
+        renderer.value.detectorOptions = detectorOptions.value
 })
 
 </script>

@@ -14,12 +14,15 @@
             @click="selectedResult = selectedResult == ResultType.Split ? ResultType.None : ResultType.Split">
             <Icon icon="fluent:layout-column-two-24-regular" />
         </button>
-        <button title="Foreground Brush" :class="{ selected: brushForeground }" @click="brushForeground = true"
-            :disabled="selectedImage == 0">
+        <button title="Foreground Brush" :class="{ selected: brushForeground }"
+            @click="brushForeground = true; eraser = false" :disabled="selectedImage == 0">
             <Icon icon="mdi:brush" />
         </button>
-        <button title="Background Brush" :class="{ selected: !brushForeground }" @click="brushForeground = false"
-            :disabled="selectedImage == 0">
+        <button title="Background Brush" :class="{ selected: !brushForeground }"
+            @click="brushForeground = false; eraser = false" :disabled="selectedImage == 0">
+            <Icon icon="mdi:brush-variant" />
+        </button>
+        <button title="Eraser" :class="{ selected: eraser }" @click="eraser = !eraser" :disabled="selectedImage == 0">
             <Icon icon="mdi:eraser" />
         </button>
 
@@ -34,21 +37,38 @@
 
         <ImageButton :title="index == 0 ? `Baseline: ${basename(image.name)}` : `${basename(image.name)}`"
             v-for="(image, index) in images" :image="image" @select="selectedImage = index"
-            @remove="state.removeImage(index)" :color="index > 0 ? colors[index] : 'transparent'"
+            @remove="state.removeImage(index); selectedImage = selectedImage == index ? 0 : index" :color="index > 0 ? colors[index] : 'transparent'"
             :class="{ selected: selectedImage == index }" />
 
         <div style="flex-grow: 1;">
-            <button v-if="isDebug" @click="emits('redraw')">
-                <Icon icon="mdi:draw" />
-            </button>
-            <select v-model="selectedDetector" title="Detector Type">
-                <option :value="value" v-for="value in [DetectorType.AKAZE, DetectorType.ORB]">{{ DetectorType[value] }}
+            <div v-if="isDebug">
+                <center>
+                    <h4>DEBUG</h4>
+                </center>
+
+                <button @click="emits('redraw')" title="Render">
+                    <Icon icon="mdi:reload" />
+                </button>
+            </div>
+            <center>
+                <h4>ALIGN</h4>
+            </center>
+            <select v-model="selectedDetector" :title="`Detector Type ${images.length == 0 ? '' : '(Not available when images added)'}`" :disabled="images.length != 0">
+                <option :value="value" v-for="value in [DetectorType.AKAZE, DetectorType.ORB]">{{
+            DetectorType[value] }}
                 </option>
             </select>
-            <div>
+            <template v-if="selectedDetector == DetectorType.ORB">
                 <Icon icon="mdi:scatter-plot-outline" />
-                <input type="text" class="no-border menu-input" v-model="maxDetectorWidth" title="Max Width For Detector Image" />
-            </div>
+                <input type="number" class="no-arrows no-border menu-input" v-model="detectorOptions.maxFeatures"
+                    title="Max number of features to detect" />
+            </template>
+            <Icon icon="mdi:arrow-left-right" />
+            <input type="number" class="no-arrows no-border menu-input" v-model="detectorOptions.widthLimit"
+                title="Image width limit for detector" :disabled="images.length != 0" />
+            <Icon icon="mdi:arrow-all" />
+            <input type="number" class="no-arrows no-border menu-input" v-model="detectorOptions.knnDistance"
+                title="Maximum distance of a good match" />
         </div>
     </aside>
 </template>
@@ -66,7 +86,7 @@ const emits = defineEmits<{
 }>()
 
 const state = useState()
-const { brushForeground, brushSize, images, selectedImage, selectedResult, selectedDetector, colors, maxDetectorWidth } = storeToRefs(state)
+const { brushForeground, brushSize, eraser, images, selectedImage, selectedResult, selectedDetector, colors, detectorOptions } = storeToRefs(state)
 const isDebug = import.meta.env.NODE_ENV != 'production'
 
 const input = document.createElement('input');
