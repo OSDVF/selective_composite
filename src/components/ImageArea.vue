@@ -1,20 +1,22 @@
 <template>
     <main ref="main">
-        <canvas ref="canvas" class="absolute-canvas"></canvas>
+        <canvas ref="canvas" class="absolute-canvas" @mousemove="paint" @touchmove="(e) => paint(e.touches[0])"
+            @mousedown="isDown = true" @mouseup="isDown = false" @touchstart="isDown = true" @touchend="isDown = false"
+            @touchcancel="isDown = false"></canvas>
         <!--<canvas ref="debug" class="absolute-canvas"></canvas>-->
         <img :src="result" :width="selectedResult == ResultType.Split ? '50%' : 0" />
     </main>
 </template>
 
 <script setup lang="ts">
-import { onMounted, watch, ref, onBeforeUnmount, shallowRef } from 'vue';
+import { onMounted, watch, ref, onBeforeUnmount, shallowRef, computed } from 'vue';
 import { useState, ResultType } from '../state';
 import { storeToRefs } from 'pinia';
 import { Renderer } from '../render';
 import cvLib from '@techstark/opencv-js'
 
 const state = useState();
-const { images, selectedDetector, selectedImage, selectedResult, computing, maxDetectorWidth, initialized } = storeToRefs(state);
+const { images, selectedDetector, selectedImage, selectedResult, computing, maxDetectorWidth, initialized, brushSize } = storeToRefs(state);
 const cv = new Promise<void>((resolve) => {
     cvLib.onRuntimeInitialized = () => {
         console.log('OpenCV.js is ready');
@@ -24,6 +26,7 @@ const cv = new Promise<void>((resolve) => {
     cvLib.redirectError = console.error
 }
 );
+const isDown = ref(false);
 
 const canvas = ref<HTMLCanvasElement | null>(null);
 const debug = ref<HTMLCanvasElement | null>(null);
@@ -42,11 +45,41 @@ function reRender() {
     console.log("Re-rendered")
 }
 
+const selectedColor = computed<[number, number, number]>(() => {
+    const hexStr = state.colors[selectedImage.value] || "#000000";
+    return [parseInt(hexStr.slice(1, 3), 16), parseInt(hexStr.slice(3, 5), 16), parseInt(hexStr.slice(5, 7), 16)]
+})
+
+watch(selectedColor, (newColor) => {
+    if (!renderer.value) {
+        return;
+    }
+    renderer.value.selectedColor = newColor
+})
+watch(brushSize, (newSize) => {
+    if (!renderer.value) {
+        return;
+    }
+    renderer.value.brushSize = newSize
+})
+
+function paint(event: MouseEvent | Touch) {
+    if (!renderer.value || !isDown.value) {
+        return;
+    }
+
+    const rect = canvas.value!.getBoundingClientRect();
+    renderer.value.paint(event.clientX - rect.left, event.clientY - rect.top);
+}
+
 function passStateToRenderer() {
     renderer.value!.debugCanvas = debug.value
     renderer.value!.images = images.value;
     renderer.value!.selected = selectedImage.value;
     renderer.value!.detectorType = selectedDetector.value;
+    renderer.value!.detectorWidthLimit = maxDetectorWidth.value;
+    renderer.value!.brushSize = brushSize.value;
+    renderer.value!.selectedColor = selectedColor.value;
 
     console.log("State passed to renderer", images.value, selectedImage.value, selectedDetector.value)
 }
@@ -186,7 +219,6 @@ main {
     position: absolute;
     top: 0;
     left: 0;
-    z-index: -1;
 
     &:nth-of-type(2) {
         top: 50%
