@@ -2,9 +2,9 @@ precision mediump float;
 
 uniform sampler2D image;
 uniform sampler2D paint;
-uniform sampler2D backPaint;
 uniform vec3 paintColor;
 uniform vec3 backPaintColor;
+uniform float paintOpacity;
 uniform vec2 size;
 varying vec2 v_texcoord;
 
@@ -18,6 +18,6 @@ void main() {
         discard;
     }
 
-    gl_FragColor = vec4(mix(texture2D(image, coords).rgb, paintColor, texture2D(paint, v_texcoord).r * 0.5), 1.0);
-    gl_FragColor.xyz = mix(gl_FragColor.xyz, backPaintColor, texture2D(backPaint, v_texcoord).r * 0.5);
+    gl_FragColor = vec4(mix(texture2D(image, coords).rgb, paintColor, texture2D(paint, v_texcoord).r * paintOpacity), 1.0);
+    gl_FragColor.xyz = mix(gl_FragColor.xyz, backPaintColor, texture2D(paint, v_texcoord).g * paintOpacity);
 }

@@ -1,28 +1,37 @@
 import cv from '@techstark/opencv-js'
 import { mat3 } from 'gl-matrix'
-import showImageFrag from './shaders/showImage.frag?raw'
+import imageFrag from './shaders/image.frag?raw'
 import simpleVert from './shaders/simple.vert?raw'
 import paintFrag from './shaders/paint.frag?raw'
-import 'webgl-lint'
+import pointFrag from './shaders/point.frag?raw'
+import 'webgl-lint' // will be replaced with empty module in production
+
+export enum SegmentationType {
+    Watershed
+}
 
 export enum DetectorType {
-    AKAZE, ORB, ORBHarris
+    AKAZE, ORB
 }
 
 export type DetectorOptions = {
     knnDistance: number,
     widthLimit?: number,
     maxFeatures?: number,
+    edgeThreshold?: number,
 }
 
 export class Renderer {
     brushSize = 2;
     c: WebGLRenderingContext;
     detectorType = DetectorType.AKAZE;
+    drawKeypoints = false;
     vert: WebGLShader;
     showImage: WebGLShader;
     paintShader: WebGLShader;
-    program: WebGLProgram;
+    pointShader: WebGLShader;
+    pointProgram: WebGLProgram;
+    imageProgram: WebGLProgram;
     paintProgram: WebGLProgram;
     projections: number[][] = [];
 
@@ -33,27 +42,31 @@ export class Renderer {
     buffers: {
         fullScreenQuad: WebGLBuffer,
         paint: WebGLFramebuffer,
+        keypoints: WebGLBuffer[],
     };
     uniforms: {
         image: WebGLUniformLocation,
         // textures
-        paint: WebGLUniformLocation,
-        backPaint: WebGLUniformLocation,
+        paint: WebGLUniformLocation,//r = foreground, g = background
         projection: WebGLUniformLocation | null,
         size: WebGLUniformLocation,
+        pointSize: WebGLUniformLocation,
+        pointColor: WebGLUniformLocation,
         // colors
         paintColor: WebGLUniformLocation,
-        eraser: WebGLUniformLocation,
-        // paint program uniforms
         backPaintColor: WebGLUniformLocation,
+        paintOpacity: WebGLUniformLocation,
+        // paint program uniforms
+        value: WebGLUniformLocation,
+        back: WebGLUniformLocation,
         radius: WebGLUniformLocation,
+        from: WebGLUniformLocation,
         position: WebGLUniformLocation,
     };
 
     images: HTMLImageElement[] = [];
     imageTextures: WebGLTexture[] = [];
-    foregroundStrokeTextures: WebGLTexture[] = [];
-    backgroundStrokeTextures: WebGLTexture[] = [];
+    strokeTextures: WebGLTexture[] = [];
 
     /// -1 renders the whole composite, otherwise only single image is rendered
     selected: number = -1;
@@ -71,6 +84,7 @@ export class Renderer {
         knnDistance: 0.7,
         widthLimit: 800,
         maxFeatures: 200,
+        edgeThreshold: 31,
     };
 
     debugCanvas: HTMLCanvasElement | null = null;
@@ -112,7 +126,7 @@ export class Renderer {
         const showImage = this.c.createShader(this.c.FRAGMENT_SHADER);
         this.checkError();
         this.showImage = this.checkError(showImage);
-        this.c.shaderSource(this.showImage, showImageFrag);
+        this.c.shaderSource(this.showImage, imageFrag);
         this.checkShaderCompile(this.showImage);
 
         const paintShader = this.c.createShader(this.c.FRAGMENT_SHADER);
@@ -121,11 +135,23 @@ export class Renderer {
         this.c.shaderSource(this.paintShader, paintFrag);
         this.checkShaderCompile(this.paintShader);
 
+        const pointShader = this.c.createShader(this.c.FRAGMENT_SHADER);
+        this.checkError();
+        this.pointShader = this.checkError(pointShader);
+        this.c.shaderSource(this.pointShader, pointFrag);
+        this.checkShaderCompile(this.pointShader);
+
+        const pointProgram = this.c.createProgram();
+        this.pointProgram = this.checkError(pointProgram);
+        this.c.attachShader(this.pointProgram, this.vert);
+        this.c.attachShader(this.pointProgram, this.pointShader);
+        this.checkProgramLink(this.pointProgram);
+
         const program = this.c.createProgram();
-        this.program = this.checkError(program);
-        this.c.attachShader(this.program, this.vert);
-        this.c.attachShader(this.program, this.showImage);
-        this.checkProgramLink(this.program);
+        this.imageProgram = this.checkError(program);
+        this.c.attachShader(this.imageProgram, this.vert);
+        this.c.attachShader(this.imageProgram, this.showImage);
+        this.checkProgramLink(this.imageProgram);
 
         const paintProgram = this.c.createProgram();
         this.paintProgram = this.checkError(paintProgram);
@@ -133,33 +159,43 @@ export class Renderer {
         this.c.attachShader(this.paintProgram, this.paintShader);
         this.checkProgramLink(this.paintProgram);
 
-        const position = this.c.getAttribLocation(this.program, 'position');
+        const position = this.c.getAttribLocation(this.imageProgram, 'position');
         this.checkError();
-        const texcoord = this.c.getAttribLocation(this.program, 'texcoord');
+        const texcoord = this.c.getAttribLocation(this.imageProgram, 'texcoord');
         this.checkError();
         this.attribs = {
             position: this.checkError(position),
             texcoord: this.checkError(texcoord),
         };
 
-        const image = this.c.getUniformLocation(this.program, 'image');
-        const projection = this.c.getUniformLocation(this.program, 'projection');
+        const image = this.c.getUniformLocation(this.imageProgram, 'image');
+        const projection = this.c.getUniformLocation(this.imageProgram, 'projection');
         this.checkError();
-        const size = this.c.getUniformLocation(this.program, 'size');
+        const size = this.c.getUniformLocation(this.imageProgram, 'size');
 
         this.uniforms = {
             image: this.checkError(image),
             projection: projection,
             size: this.checkError(size),
-            paint: this.checkError(this.c.getUniformLocation(this.program, 'paint')),
-            backPaint: this.checkError(this.c.getUniformLocation(this.program, 'backPaint')),
-            paintColor: this.checkError(this.c.getUniformLocation(this.program, 'paintColor')),
-            backPaintColor: this.checkError(this.c.getUniformLocation(this.program, 'backPaintColor')),
-            eraser: this.checkError(this.c.getUniformLocation(this.paintProgram, 'eraser')),
+            paint: this.checkError(this.c.getUniformLocation(this.imageProgram, 'paint')),
+            pointSize: this.checkError(this.c.getUniformLocation(this.pointProgram, 'size')),
+            pointColor: this.checkError(this.c.getUniformLocation(this.pointProgram, 'color')),
+            paintColor: this.checkError(this.c.getUniformLocation(this.imageProgram, 'paintColor')),
+            backPaintColor: this.checkError(this.c.getUniformLocation(this.imageProgram, 'backPaintColor')),
+            paintOpacity: this.checkError(this.c.getUniformLocation(this.imageProgram, 'paintOpacity')),
+            value: this.checkError(this.c.getUniformLocation(this.paintProgram, 'value')),
+            back: this.checkError(this.c.getUniformLocation(this.paintProgram, 'back')),
             radius: this.checkError(this.c.getUniformLocation(this.paintProgram, 'radius')),
+            from: this.checkError(this.c.getUniformLocation(this.paintProgram, 'from')),
             position: this.checkError(this.c.getUniformLocation(this.paintProgram, 'position')),
         };
 
+        this.c.useProgram(this.paintProgram);
+        this.checkError();
+        this.c.uniform2f(this.c.getUniformLocation(this.paintProgram, 'size'), 0, 0);//unused in paint program
+        this.checkError();
+
+        this.setPaintOpacity(.9);
 
         // Full screen quad. Position and texcoord
         const fullScreenQuad = this.c.createBuffer();
@@ -179,6 +215,7 @@ export class Renderer {
         this.buffers = {
             fullScreenQuad: this.checkError(fullScreenQuad),
             paint: this.checkError(this.c.createFramebuffer()),
+            keypoints: [],
         };
 
         this.c.enable(this.c.BLEND);
@@ -187,7 +224,28 @@ export class Renderer {
         this.checkError();
     }
 
-    paint(x: number, y: number, background: boolean) {
+    clearPaint(background = false) {
+        this.c.bindFramebuffer(this.c.FRAMEBUFFER, this.buffers.paint);
+        this.checkError()
+        this.c.framebufferTexture2D(this.c.FRAMEBUFFER,
+            this.c.COLOR_ATTACHMENT0,
+            this.c.TEXTURE_2D,
+            this.strokeTextures[this.selected], 0
+        );
+        this.checkError()
+        // foreground means clearing the R channel
+        this.c.colorMask(!background, background, false, true);
+        this.checkError()
+        this.c.clearColor(0,0, 0, 1);
+        this.checkError()
+        this.c.clear(this.c.COLOR_BUFFER_BIT);
+        this.checkError()
+        this.c.colorMask(true, true, true, true);
+        this.checkError()
+        this.render()
+    }
+
+    paint(fromX: number, fromY: number, toX: number, toY: number, background: boolean) {
         if (this.selected <= 0) {
             return;
         }
@@ -195,7 +253,7 @@ export class Renderer {
         this.c.framebufferTexture2D(this.c.FRAMEBUFFER,
             this.c.COLOR_ATTACHMENT0,
             this.c.TEXTURE_2D,
-            (background ? this.backgroundStrokeTextures : this.foregroundStrokeTextures)[this.selected], 0
+            this.strokeTextures[this.selected], 0
         );
         this.checkError();
         this.c.viewport(0, 0, this.images[this.selected].naturalWidth, this.images[this.selected].naturalHeight);
@@ -208,8 +266,10 @@ export class Renderer {
 
         this.c.uniform1f(this.uniforms.radius, this.brushSize);
         const canvasScale = this.images[this.selected].naturalWidth / this.c.canvas.width;
-        this.c.uniform2f(this.uniforms.position, x * canvasScale, y * canvasScale);
-        this.c.uniform1i(this.uniforms.eraser, this.erase ? 1 : 0);
+        this.c.uniform2f(this.uniforms.from, fromX * canvasScale, fromY * canvasScale);
+        this.c.uniform2f(this.uniforms.position, toX * canvasScale, toY * canvasScale);
+        this.c.uniform1f(this.uniforms.value, this.erase ? 0 : 1);
+        this.c.uniform1i(this.uniforms.back, background ? 1 : 0);
         this.c.drawArrays(this.c.TRIANGLES, 0, 6);
 
         this.render()
@@ -218,7 +278,7 @@ export class Renderer {
     updateImages() {
         const debug: cv.Mat[] = []
         for (let i = 0; i < this.images.length; i++) {
-            const cached = this.cacheSrcs[i] == this.images[i].src.substring(0, 100);
+            const cached = this.cacheSrcs[i] == this.images[i].src.substring(0, 100) + this.detectorType;
 
             if (!cached || this.debugCanvas) {
                 // proxy width and height to naturalWidth and naturalHeight
@@ -241,7 +301,10 @@ export class Renderer {
                     const keypoints = new cv.KeyPointVector();
                     const descriptors = new cv.Mat();
 
-                    const detector: cv.Feature2D = this.detectorType === DetectorType.AKAZE ? new (cv as any).AKAZE() : new cv.ORB(this.detectorOptions.maxFeatures, undefined, undefined, undefined, undefined, undefined, this.detectorType == DetectorType.ORB ? (cv as any).FAST_SCORE : undefined);
+                    const detector: cv.Feature2D = this.detectorType === DetectorType.AKAZE ? new (cv as any).AKAZE() : new cv.ORB(this.detectorOptions.maxFeatures);
+                    if (this.detectorType === DetectorType.ORB && this.detectorOptions.edgeThreshold) {
+                        (detector as any).setEdgeThreshold(this.detectorOptions.edgeThreshold)
+                    }
                     detector.detectAndCompute(gray, new cv.Mat(), keypoints, descriptors);
                     detector.delete();
 
@@ -267,13 +330,12 @@ export class Renderer {
                         this.checkError();
 
                         // create render target for painting
-                        if (!this.foregroundStrokeTextures[i] && (import.meta.hot || i != 0)) {
+                        if (!this.strokeTextures[i] && (import.meta.hot || i != 0)) {
                             const paint = this.c.createTexture();
-                            this.foregroundStrokeTextures[i] = this.checkError(paint);
-                            const backPaint = this.c.createTexture();
-                            this.backgroundStrokeTextures[i] = this.checkError(backPaint);
+                            this.strokeTextures[i] = this.checkError(paint);
                         }
-                        for (const tex of [this.foregroundStrokeTextures[i], this.backgroundStrokeTextures[i], imTex]) {
+                        for (const tex of [this.strokeTextures[i], imTex]) {
+                            if (!tex) continue
                             this.c.bindTexture(this.c.TEXTURE_2D, tex);
                             this.c.texImage2D(this.c.TEXTURE_2D, 0, this.c.RGB, im.naturalWidth, im.naturalHeight, 0, this.c.RGB, this.c.UNSIGNED_SHORT_5_6_5, null);
                             this.c.texParameteri(this.c.TEXTURE_2D, this.c.TEXTURE_MIN_FILTER, this.c.LINEAR);
@@ -286,7 +348,7 @@ export class Renderer {
                     this.c.texImage2D(this.c.TEXTURE_2D, 0, this.c.RGBA, this.c.RGBA, this.c.UNSIGNED_BYTE, this.images[i]);
 
                     if (i == 0) {// baseline image is cached early, others are after their features are matched
-                        this.cacheSrcs[i] = this.images[0].src.substring(0, 100);
+                        this.cacheSrcs[i] = this.images[0].src.substring(0, 100) + this.detectorType;
                     }
                 }
                 gray.delete()
@@ -295,10 +357,10 @@ export class Renderer {
 
         for (let i = 1; i < this.images.length; i++) {
             const im = this.images[i];
-            if (this.cacheSrcs[i] == im.src.substring(0, 100)) {
+            if (this.cacheSrcs[i] == im.src.substring(0, 100) + this.detectorType) {
                 continue
             } else {
-                this.cacheSrcs[i] = im.src.substring(0, 100);
+                this.cacheSrcs[i] = im.src.substring(0, 100) + this.detectorType;
             }
 
             const good_matches = new cv.DMatchVector();
@@ -386,7 +448,26 @@ export class Renderer {
         this.checkError()
         this.clear()
 
-        this.c.useProgram(this.program);
+        this.useImageProgram()
+
+        if (this.selected == -1) {
+            for (let i = 0; i < this.imageTextures.length; i++) {
+                this.renderImage(i, false)
+            }
+        } else if (this.images[this.selected]) {
+            this.renderImage(this.selected, true)
+        }
+        this.checkError();
+
+    }
+
+    public setPaintOpacity(opacity: number) {
+        this.c.useProgram(this.imageProgram);
+        this.c.uniform1f(this.uniforms.paintOpacity, opacity);
+    }
+
+    private useImageProgram() {
+        this.c.useProgram(this.imageProgram);
         this.checkError()
 
         this.c.bindBuffer(this.c.ARRAY_BUFFER, this.buffers.fullScreenQuad);
@@ -396,16 +477,6 @@ export class Renderer {
         this.c.vertexAttribPointer(this.attribs.position, 2, this.c.FLOAT, false, 4 * 4, 0);
         this.c.enableVertexAttribArray(this.attribs.texcoord);
         this.c.vertexAttribPointer(this.attribs.texcoord, 2, this.c.FLOAT, false, 4 * 4, 2 * 4);
-
-        if (this.selected == -1) {
-            for (let i = 0; i < this.imageTextures.length; i++) {
-                this.renderImage(i, false)
-            }
-        } else if(this.images[this.selected]) {
-            this.renderImage(this.selected, true)
-        }
-        this.checkError();
-
     }
 
     private renderImage(i: number, renderPaint: boolean) {
@@ -414,9 +485,7 @@ export class Renderer {
         this.checkError()
         this.c.uniform1i(this.uniforms.image, 0);
         this.c.activeTexture(this.c.TEXTURE1);
-        this.c.bindTexture(this.c.TEXTURE_2D, this.foregroundStrokeTextures[i]);
-        this.c.activeTexture(this.c.TEXTURE2);
-        this.c.bindTexture(this.c.TEXTURE_2D, this.backgroundStrokeTextures[i]);
+        this.c.bindTexture(this.c.TEXTURE_2D, this.strokeTextures[i]);
         if (renderPaint) {
             this.c.uniform3f(this.uniforms.paintColor, this.paintColor[0], this.paintColor[1], this.paintColor[2]);
             this.c.uniform3f(this.uniforms.backPaintColor, this.backPaintColor[0], this.backPaintColor[1], this.backPaintColor[2]);
@@ -425,7 +494,6 @@ export class Renderer {
             this.c.uniform3f(this.uniforms.backPaintColor, 0, 0, 0);
         }
         this.c.uniform1i(this.uniforms.paint, 1);
-        this.c.uniform1i(this.uniforms.backPaint, 2);
 
         // compute the dimensions used for the computation
         const width = Math.min(this.images[i].naturalWidth, this.detectorOptions.widthLimit ?? this.images[i].naturalWidth);
@@ -442,5 +510,30 @@ export class Renderer {
         }
 
         this.c.drawArrays(this.c.TRIANGLES, 0, 6);
+
+        if (this.drawKeypoints) {
+            this.c.useProgram(this.pointProgram);
+            if (!this.buffers.keypoints[i]) {
+                this.buffers.keypoints[i] = this.checkError(this.c.createBuffer());
+                this.c.bindBuffer(this.c.ARRAY_BUFFER, this.buffers.keypoints[i]);
+                const kpData = new Float32Array(this.keypoints[i].size() * 2);
+                for (let j = 0; j < this.keypoints[i].size(); j++) {
+                    const kp = this.keypoints[i].get(j);
+                    kpData[j * 2] = kp.pt.x;
+                    kpData[j * 2 + 1] = kp.pt.y;
+                }
+                this.c.bufferData(this.c.ARRAY_BUFFER, kpData, this.c.STATIC_DRAW);
+            }
+            this.c.bindBuffer(this.c.ARRAY_BUFFER, this.buffers.keypoints[i]);
+            this.c.enableVertexAttribArray(this.attribs.position);
+            this.c.vertexAttribPointer(this.attribs.position, 2, this.c.FLOAT, false, 0, 0);
+
+            this.c.uniform1f(this.uniforms.pointSize, 5);
+            this.c.uniform3f(this.uniforms.pointColor, 1, 0, 0);
+
+            this.c.drawArrays(this.c.POINTS, 0, this.keypoints[i].size());
+
+            this.useImageProgram()
+        }
     }
 }

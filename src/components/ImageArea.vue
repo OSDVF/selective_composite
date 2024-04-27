@@ -1,8 +1,9 @@
 <template>
     <main ref="main">
         <canvas ref="canvas" class="absolute-canvas" @mousemove="paint" @touchmove="(e) => paint(e.touches[0])"
-            @mousedown="isDown = true" @mouseup="isDown = false" @touchstart="isDown = true" @touchend="isDown = false"
-            @touchcancel="isDown = false"></canvas>
+            @mousedown="(e) => (isDown = true, prevPos = [e.clientX, e.clientY])" @mouseup="isDown = false"
+            @touchstart="(e) => (isDown = true, prevPos = [e.touches[0].clientX, e.touches[0].clientY])"
+            @touchend="isDown = false" @touchcancel="isDown = false"></canvas>
         <!--<canvas ref="debug" class="absolute-canvas"></canvas>-->
         <img :src="result" :width="selectedResult == ResultType.Split ? '50%' : 0" />
     </main>
@@ -16,7 +17,10 @@ import { Renderer } from '../render';
 import cvLib from '@techstark/opencv-js'
 
 const state = useState();
-const { eraser, images, selectedDetector, selectedImage, selectedResult, computing, detectorOptions, initialized, brushSize } = storeToRefs(state);
+const { eraser, images, paintOpacity,
+    selectedDetector, selectedImage, selectedResult, computing, detectorOptions,
+    initialized, brushSize, drawKeypoints
+} = storeToRefs(state);
 const cv = new Promise<void>((resolve) => {
     cvLib.onRuntimeInitialized = () => {
         console.log('OpenCV.js is ready');
@@ -26,7 +30,9 @@ const cv = new Promise<void>((resolve) => {
     cvLib.redirectError = console.error
 }
 );
+// painting state
 const isDown = ref(false);
+let prevPos = [0, 0]
 
 const canvas = ref<HTMLCanvasElement | null>(null);
 const debug = ref<HTMLCanvasElement | null>(null);
@@ -37,12 +43,22 @@ let renderer = shallowRef<Renderer | null>(null)
 let observer = shallowRef<ResizeObserver | null>(null)
 
 defineExpose({
-    reRender
+    reRender,
+    clearForeground,
+    clearBackground
 })
 
 function reRender() {
     renderer.value?.render()
     console.log("Re-rendered")
+}
+
+function clearForeground() {
+    renderer.value?.clearPaint(false)
+}
+
+function clearBackground() {
+    renderer.value?.clearPaint(true)
 }
 
 const selectedColor = computed<[number, number, number]>(() => {
@@ -54,7 +70,7 @@ watch(selectedColor, (newColor) => {
     if (!renderer.value) {
         return;
     }
-    renderer.value.paintColor = newColor
+    renderer.value.paintColor = newColor.map(a => a / 255)
 })
 watch(brushSize, (newSize) => {
     if (!renderer.value) {
@@ -66,6 +82,15 @@ watch(eraser, (e) => {
     if (!renderer.value) return
     renderer.value.erase = e
 })
+watch(drawKeypoints, (e) => {
+    if (!renderer.value) return
+    renderer.value.drawKeypoints = e
+})
+watch(paintOpacity, (opacity) => {
+    if (!renderer.value) return
+    renderer.value.setPaintOpacity(opacity)
+    renderer.value.render()
+})
 
 function paint(event: MouseEvent | Touch) {
     if (!renderer.value || !isDown.value) {
@@ -73,7 +98,8 @@ function paint(event: MouseEvent | Touch) {
     }
 
     const rect = canvas.value!.getBoundingClientRect();
-    renderer.value.paint(event.clientX - rect.left, event.clientY - rect.top, !state.brushForeground);
+    renderer.value.paint(prevPos[0] - rect.left, prevPos[1] - rect.top, event.clientX - rect.left, event.clientY - rect.top, !state.brushForeground);
+    prevPos = [event.clientX, event.clientY];
 }
 
 function passStateToRenderer() {
@@ -83,7 +109,7 @@ function passStateToRenderer() {
     renderer.value!.detectorType = selectedDetector.value;
     renderer.value!.detectorOptions = detectorOptions.value;
     renderer.value!.brushSize = brushSize.value;
-    renderer.value!.paintColor = selectedColor.value;
+    renderer.value!.paintColor = selectedColor.value.map(a => a / 255);
     renderer.value!.erase = eraser.value
 }
 

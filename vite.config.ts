@@ -7,6 +7,7 @@ export default defineConfig({
     {
       template: {
         compilerOptions: {
+          sourceMap: true,
           isCustomElement(tag: string) {
             return ['center'].includes(tag)
           },
@@ -17,5 +18,8 @@ export default defineConfig({
     alias: process.env.NODE_ENV === 'production' ? {
       'webgl-lint':  './src/empty.js'
     } : undefined
+  },
+  build: {
+    sourcemap: true,
   }
 })
