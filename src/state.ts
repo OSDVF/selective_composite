@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, computed, watch } from 'vue'
 import stc from 'string-to-color'
 import { DetectorOptions, DetectorType, SegmentationType } from './render'
+import { usePersistentRef } from './persistence'
 
 export enum ResultType {
     Split, Full, None
@@ -11,10 +12,14 @@ export const useState = defineStore('state', () => {
     const images = ref<HTMLImageElement[]>([])
     const brushSize = ref(5)
     const paintOpacity = ref(0.9)
+    const pointSizeExp = usePersistentRef("pointSizeExp", 10)
+    const pointSizeLin = usePersistentRef("pointSize", 1)
+    const enableAlignment = usePersistentRef("align", true)
     const selectedImage = ref(0)
     const selectedResult = ref(ResultType.None)
-    const selectedDetector = ref(DetectorType.AKAZE)
-    const selectedSegmentation = ref(SegmentationType.Watershed)
+    const selectedDetector = usePersistentRef("detector", DetectorType.AKAZE)
+    const selectedSegmentation = usePersistentRef("segmentation", SegmentationType.Watershed)
+    const showDebug = usePersistentRef("debug", false)
     const colors = computed(() => images.value.map((img, i) => stc(img.src.substring(0, 50) + i.toString())))
     // foreground/background selector
     const brushForeground = ref(true)
@@ -31,7 +36,7 @@ export const useState = defineStore('state', () => {
     const initialized = ref(false)
 
     watch(selectedSegmentation, (value) => {
-        if(value === SegmentationType.Watershed) {
+        if (value === SegmentationType.Watershed) {
             brushForeground.value = true//watershed only needs foreground
         }
     })
@@ -55,14 +60,18 @@ export const useState = defineStore('state', () => {
         computing,
         drawKeypoints,
         detectorOptions,
+        enableAlignment,
         eraser,
         images,
         initialized,
         paintOpacity,
+        pointSizeLin,
+        pointSizeExp,
         selectedDetector,
         selectedImage,
         selectedResult,
         selectedSegmentation,
+        showDebug,
         addImage,
         removeImage
     }

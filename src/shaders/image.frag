@@ -11,9 +11,9 @@ varying vec2 v_texcoord;
 uniform highp mat3 projection; 
 
 void main() {
-    highp vec3 frameCoordinate = vec3(v_texcoord * size, 1.0); 
+    highp vec3 frameCoordinate = vec3(v_texcoord * size.xy, 1.0); 
     highp vec3 trans = projection * frameCoordinate; 
-    highp vec2 coords = (trans.xy/size) / trans.z; 
+    highp vec2 coords = (trans.xy/size.xy) / trans.z; 
     if (coords.x < 0.0 || coords.x > 1.0 || coords.y < 0.0 || coords.y > 1.0) {
         discard;
     }

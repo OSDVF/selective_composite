@@ -19,7 +19,7 @@ const imageArea = ref<InstanceType<typeof ImageArea> | null>(null)
 
 <template>
   <div id="root">
-    <Menu @redraw="imageArea?.reRender" @clear-foreground="imageArea?.clearForeground" @clear-background="imageArea?.clearBackground" style="overflow-y: auto; max-height: 100vh" />
+    <Menu @redraw="imageArea?.render" @clear-foreground="imageArea?.clearForeground" @clear-background="imageArea?.clearBackground" style="overflow-y: auto; max-height: 100vh" />
     <ImageArea ref="imageArea" />
     <div v-if="errors && errors.length" class="bottom" style="color: red;">
       <div v-for="err in errors">

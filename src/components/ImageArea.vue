@@ -4,22 +4,22 @@
             @mousedown="(e) => (isDown = true, prevPos = [e.clientX, e.clientY])" @mouseup="isDown = false"
             @touchstart="(e) => (isDown = true, prevPos = [e.touches[0].clientX, e.touches[0].clientY])"
             @touchend="isDown = false" @touchcancel="isDown = false"></canvas>
-        <!--<canvas ref="debug" class="absolute-canvas"></canvas>-->
-        <img :src="result" :width="selectedResult == ResultType.Split ? '50%' : 0" />
+        <canvas v-if="showDebug" ref="debug" class="absolute-canvas"></canvas>
+        <img :src="resultImage" :width="selectedResult == ResultType.Split ? '50%' : 0" />
     </main>
 </template>
 
 <script setup lang="ts">
-import { onMounted, watch, ref, onBeforeUnmount, shallowRef, computed } from 'vue';
+import { onMounted, watch, ref, onBeforeUnmount, shallowRef, computed, nextTick } from 'vue';
 import { useState, ResultType } from '../state';
 import { storeToRefs } from 'pinia';
 import { Renderer } from '../render';
 import cvLib from '@techstark/opencv-js'
 
 const state = useState();
-const { eraser, images, paintOpacity,
-    selectedDetector, selectedImage, selectedResult, computing, detectorOptions,
-    initialized, brushSize, drawKeypoints
+const { eraser, images, paintOpacity, enableAlignment,
+    selectedDetector, selectedImage, selectedResult, selectedSegmentation, computing, detectorOptions,
+    initialized, brushSize, drawKeypoints, showDebug, pointSizeLin, pointSizeExp
 } = storeToRefs(state);
 const cv = new Promise<void>((resolve) => {
     cvLib.onRuntimeInitialized = () => {
@@ -27,7 +27,9 @@ const cv = new Promise<void>((resolve) => {
         resolve();
         initialized.value = true
     }
-    cvLib.redirectError = console.error
+    cvLib.redirectError = (e) => {
+        console.error(cvLib.exceptionFromPtr(e))
+    }
 }
 );
 // painting state
@@ -36,21 +38,21 @@ let prevPos = [0, 0]
 
 const canvas = ref<HTMLCanvasElement | null>(null);
 const debug = ref<HTMLCanvasElement | null>(null);
-const result = ref<string>("");
+const resultImage = ref<string | undefined>();
 const main = ref<HTMLDivElement | null>(null);
 
 let renderer = shallowRef<Renderer | null>(null)
 let observer = shallowRef<ResizeObserver | null>(null)
 
 defineExpose({
-    reRender,
+    render,
     clearForeground,
     clearBackground
 })
 
-function reRender() {
-    renderer.value?.render()
-    console.log("Re-rendered")
+function render() {
+    requestAnimationFrame(() =>
+        renderer.value?.render())
 }
 
 function clearForeground() {
@@ -76,7 +78,7 @@ watch(brushSize, (newSize) => {
     if (!renderer.value) {
         return;
     }
-    renderer.value.brushSize = newSize
+    renderer.value.setPaintRadius(newSize)
 })
 watch(eraser, (e) => {
     if (!renderer.value) return
@@ -85,11 +87,30 @@ watch(eraser, (e) => {
 watch(drawKeypoints, (e) => {
     if (!renderer.value) return
     renderer.value.drawKeypoints = e
+    render()
 })
 watch(paintOpacity, (opacity) => {
     if (!renderer.value) return
     renderer.value.setPaintOpacity(opacity)
-    renderer.value.render()
+    render()
+})
+watch([pointSizeLin, pointSizeExp], ([lin, exp]) => {
+    if (!renderer.value) return
+    renderer.value.setPointScale(exp, lin)
+    render()
+})
+watch(selectedSegmentation, (seg) => {
+    if (!renderer.value) return
+    renderer.value.segmentationType = seg
+})
+watch(enableAlignment, (a) => {
+    if (!renderer.value) return
+    renderer.value.align = a
+})
+watch(debug, (d) => {
+    if (!renderer.value) return
+    renderer.value.debugCanvas = d
+    render()
 })
 
 function paint(event: MouseEvent | Touch) {
@@ -103,14 +124,19 @@ function paint(event: MouseEvent | Touch) {
 }
 
 function passStateToRenderer() {
+    renderer.value!.align = enableAlignment.value
     renderer.value!.debugCanvas = debug.value
     renderer.value!.images = images.value;
     renderer.value!.selected = selectedImage.value;
     renderer.value!.detectorType = selectedDetector.value;
     renderer.value!.detectorOptions = detectorOptions.value;
-    renderer.value!.brushSize = brushSize.value;
+    renderer.value!.drawKeypoints = drawKeypoints.value
     renderer.value!.paintColor = selectedColor.value.map(a => a / 255);
     renderer.value!.erase = eraser.value
+    renderer.value!.segmentationType = selectedSegmentation.value
+    renderer.value!.setPaintOpacity(paintOpacity.value)
+    renderer.value!.setPaintRadius(brushSize.value)
+    renderer.value!.setPointScale(pointSizeExp.value, pointSizeLin.value)
 }
 
 onMounted(() => {// also called when hot reloading
@@ -122,16 +148,13 @@ onMounted(() => {// also called when hot reloading
     if (images.value.length > 0)
         updateCanvasSize(images.value[0])
 
-    if (renderer.value) {
-        passStateToRenderer()
-        renderer.value.updateImages()
-    } else {
+    if (!renderer.value) {
         renderer.value = new Renderer(ctx);
-        passStateToRenderer()
     }
+    passStateToRenderer()
     if (images.value.length > 0) {
         renderer.value!.updateImages();
-        renderer.value!.render();
+        render()
     }
 
     if (main.value) {
@@ -141,7 +164,7 @@ onMounted(() => {// also called when hot reloading
             }
             if (!initialized.value) await cv
             updateCanvasSize(images.value[0]);
-            renderer.value?.render();
+            render()
         });
 
         observer.value.observe(main.value);
@@ -202,7 +225,7 @@ watch(images, async (newImages, oldImages) => {
         setTimeout(() => {
             renderer.value!.selected = selectedImage.value;
             renderer.value!.updateImages();
-            renderer.value!.render()
+            render()
             computing.value = false
         }, 1)
     } else {
@@ -219,8 +242,29 @@ watch([selectedResult, selectedImage], async ([newResult, newSelected], [oldResu
     if (oldResult != newResult && images.value) {
         updateCanvasSize(images.value[0])
     }
-    renderer.value.render();
+    if (newResult != ResultType.None) {
+        nextTick(() => renderResult())// also renders the currently selected image if view is split
+    } else {
+        render();
+    }
 })
+
+function renderResult() {
+    if (!renderer.value) {
+        return;
+    }
+    renderer.value.selected = -1
+    render()
+    if (selectedResult.value == ResultType.Split) {
+        // save and show the snapshot
+        renderer.value.c.finish()
+        resultImage.value = canvas.value?.toDataURL()
+
+        // render again the previous image
+        renderer.value.selected = selectedImage.value
+        render()
+    }
+}
 
 watch(selectedDetector, () => {
     if (renderer.value)

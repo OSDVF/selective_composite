@@ -1,12 +1,12 @@
 precision mediump float;
-uniform float radius;
+uniform vec2 size;
 uniform vec2 from;
 uniform vec2 position;
 uniform float value;
 uniform bool back;
 
 void main() {
-    // draw a segment with rounded ends and the thickness of `radius` between `from` and `position`
+    // draw a segment with rounded ends and the thickness of `size.x` between `from` and `position`
     // the current fragment is at `gl_FragCoord.xy`
     vec2 dir = position - from;
     if (length(dir) < 0.0001) {
@@ -26,7 +26,7 @@ void main() {
     }
 
     float dist = length(gl_FragCoord.xy - closestPoint);
-    if (dist < radius / 2.0) {
+    if (dist < size.x / 2.0) {
         // paint
         if(back) {
             gl_FragColor = vec4(0.0, value, 0.0, 1.);

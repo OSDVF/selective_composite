@@ -59,17 +59,14 @@
 
         <div style="flex-grow: 1;">
             <div v-if="isDebug">
-                <center>
-                    <h4>DEBUG</h4>
-                </center>
+                <input type="checkbox" v-model="showDebug" id="showDebug"><label for="showDebug">Dbg</label>
 
                 <button @click="emit('redraw')" title="Render">
                     <Icon icon="mdi:reload" />
                 </button>
             </div>
-            <center>
-                <h5>Alignment</h5>
-            </center>
+
+            <input type="checkbox" v-model="enableAlignment" id="alignment"><label for="alignment">Align</label>
             <select v-model="selectedDetector"
                 :title="`Detector Type ${images.length == 0 ? '' : '(Not available when images added)'}`"
                 :disabled="images.length != 0">
@@ -95,6 +92,17 @@
             <button :class="{ selected: drawKeypoints }" @click="drawKeypoints = !drawKeypoints" title="Draw Keypoints">
                 <Icon icon="mdi:scatter-plot" />
             </button>
+
+            <template v-if="drawKeypoints">
+                <input type="range" min=".1" step=".1" max="16" v-model.number="pointSizeLin" title="Drawn Keypoint Scale">
+                <Icon icon="mdi:circle-outline" />
+                <input type="number" class="no-border menu-input" min="1" v-model.number="pointSizeLin"
+                    title="Drawn Keypoint Scale" />
+                <input type="range" min="1" step="1" max="16" v-model.number="pointSizeExp" title="Scale Exponential Base">
+                <Icon icon="mdi:exponent" />
+                <input type="number" class="no-border menu-input" min="1" v-model.number="pointSizeExp"
+                    title="Scale Exponential Base" />
+            </template>
         </div>
     </aside>
 </template>
@@ -114,9 +122,9 @@ const emit = defineEmits<{
 }>()
 
 const state = useState()
-const { brushForeground, brushSize, eraser, images, paintOpacity,
+const { brushForeground, brushSize, eraser, enableAlignment, images, paintOpacity, pointSizeLin, pointSizeExp,
     selectedImage, selectedResult, selectedDetector, selectedSegmentation,
-    colors, detectorOptions, drawKeypoints
+    colors, detectorOptions, drawKeypoints, showDebug
 } = storeToRefs(state)
 const isDebug = import.meta.env.NODE_ENV != 'production'
 
