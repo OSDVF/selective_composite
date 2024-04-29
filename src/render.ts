@@ -257,6 +257,10 @@ export class Renderer {
         this.checkError();
         this.c.blendFunc(this.c.SRC_ALPHA, this.c.ONE_MINUS_SRC_ALPHA);
         this.checkError();
+        this.c.pixelStorei(this.c.UNPACK_ALIGNMENT, 1);
+        this.checkError();
+        this.c.pixelStorei(this.c.PACK_ALIGNMENT, 1);
+        this.checkError();
     }
 
     clearPaint(background = false) {
@@ -290,6 +294,23 @@ export class Renderer {
             return;
         }
         delete this.cacheComp[this.selected]
+        const proj = this.projections[this.selected]
+        const canvasScaleX = this.images[this.selected].naturalWidth / this.c.canvas.width;
+        const canvasScaleY = this.images[this.selected].naturalHeight / this.c.canvas.height;
+        const from = vec3.fromValues(fromX * canvasScaleX, fromY * canvasScaleY, 1.)
+        const to = vec3.fromValues(toX * canvasScaleX, toY * canvasScaleY, 1.)
+        if (proj) {
+            const mat = mat3.create()
+            mat3.copy(mat, proj)
+            mat3.invert(mat, mat)
+            vec3.transformMat3(from, from, proj)
+            vec3.transformMat3(to, to, proj)
+
+            from[0] /= from[2]
+            from[1] /= from[2]
+            to[0] /= to[2]
+            to[1] /= to[2]
+        }
 
         this.c.bindFramebuffer(this.c.FRAMEBUFFER, this.buffers.paint);
         this.c.framebufferTexture2D(this.c.FRAMEBUFFER,
@@ -306,9 +327,8 @@ export class Renderer {
         this.c.enableVertexAttribArray(this.attribs.texcoord);
         this.c.vertexAttribPointer(this.attribs.texcoord, 2, this.c.FLOAT, false, 4 * 4, 2 * 4);
 
-        const canvasScale = this.images[this.selected].naturalWidth / this.c.canvas.width;
-        this.c.uniform2f(this.uniforms.from, fromX * canvasScale, fromY * canvasScale);
-        this.c.uniform2f(this.uniforms.position, toX * canvasScale, toY * canvasScale);
+        this.c.uniform2f(this.uniforms.from, from[0], from[1]);
+        this.c.uniform2f(this.uniforms.position, to[0], to[1]);
         this.c.uniform1f(this.uniforms.value, this.erase ? 0 : 1);
         this.c.uniform1i(this.uniforms.back, background ? 1 : 0);
         this.c.drawArrays(this.c.TRIANGLES, 0, 6);
@@ -325,61 +345,99 @@ export class Renderer {
 
     composite() {
         for (let i = 0; i < this.images.length; i++) {
-            if (this.cacheComp[i]) {
+            if (this.cacheComp[i] == this.cacheCompKey(i)) {
                 continue
             }
             try {
 
                 // proxy width and height to naturalWidth and naturalHeight
                 const proxy = this.images[i].cloneNode() as HTMLImageElement
-                proxy.width = proxy.naturalWidth
-                proxy.height = proxy.naturalHeight
+                const w = proxy.width = proxy.naturalWidth
+                const h = proxy.height = proxy.naturalHeight
 
                 const data = cv.imread(proxy)
                 cv.cvtColor(data, data, cv.COLOR_RGBA2RGB);//remove the alpha channel
                 proxy.remove()
                 // read paint texture
-                const paint = new Uint8Array(data.rows * data.cols * 4);
+                const readback = new Uint8Array(data.rows * data.cols * 4);
 
+                this.c.viewport(0, 0, data.cols, data.rows)
                 this.c.bindFramebuffer(this.c.FRAMEBUFFER, this.buffers.paint);
                 this.c.framebufferTexture2D(this.c.FRAMEBUFFER,
                     this.c.COLOR_ATTACHMENT0,
                     this.c.TEXTURE_2D,
                     this.strokeTextures[i], 0
                 );
-                this.c.readPixels(0, 0, data.cols, data.rows, this.c.RGBA, this.c.UNSIGNED_BYTE, paint);
+                this.c.readPixels(0, 0, data.cols, data.rows, this.c.RGBA, this.c.UNSIGNED_BYTE, readback);
                 this.checkError()
 
-                const markers = new cv.Mat();
-                const cvPaint = new cv.Mat();
-                const paintTransposed = cv.matFromArray(data.rows, data.cols, cv.CV_8UC4, paint);
-                cv.cvtColor(paintTransposed, paintTransposed, cv.COLOR_RGBA2GRAY);
-                cv.transpose(paintTransposed, cvPaint);
-                paintTransposed.delete()
+                const paintChannels = cv.matFromArray(data.rows, data.cols, cv.CV_8UC4, readback);
+                const paintForeground = new cv.Mat(data.rows, data.cols, cv.CV_8U)
+                const paintBackground = new cv.Mat(data.rows, data.cols, cv.CV_8U)
+                const list = new cv.MatVector()
+                list.push_back(paintForeground)
+                list.push_back(paintBackground)
+                cv.split(paintChannels, list)
+                list.delete()
+                paintChannels.delete()
 
-                cv.connectedComponents(cvPaint, markers)
-                cvPaint.delete()
+                const unknown = new cv.Mat(data.rows, data.cols, cv.CV_8U, new cv.Scalar(255));
+                cv.subtract(unknown, paintForeground, unknown);
+                cv.subtract(unknown, paintBackground, unknown);
+                const markers = new cv.Mat();
+                cv.connectedComponents(paintForeground, markers)
+                for (let i = 0; i < markers.rows; i++) {
+                    for (let j = 0; j < markers.cols; j++) {
+                        markers.intPtr(i, j)[0] = markers.ucharPtr(i, j)[0] + 1;
+                        if (unknown.ucharPtr(i, j)[0] == 255) {
+                            markers.intPtr(i, j)[0] = 0;
+                        }
+                    }
+                }
+                unknown.delete()
+                paintForeground.delete()
+                paintBackground.delete()
                 cv.watershed(data, markers)
 
+                if (this.debugCanvas) {
+                    cv.imshow(this.debugCanvas, markers)
+                }
+
                 // upload the result (data with markers as alpha) to the texture
-                cv.merge([data, markers], 2, data)
+                for (let r = 0; r < markers.rows; r++) {
+                    for (let c = 0; c < markers.cols; c++) {
+                        if (markers.intPtr(r, c)[0] == 1 || markers.intPtr(r, c)[0] == -1) {
+                            readback[(r * w + c) * 4 + 3] = 0
+                        } else {
+                            readback[(r * w + c) * 4] = data.ucharPtr(r, c)[0]
+                            readback[(r * w + c) * 4 + 1] = data.ucharPtr(r, c)[1]
+                            readback[(r * w + c) * 4 + 2] = data.ucharPtr(r, c)[2]
+                            readback[(r * w + c) * 4 + 3] = 255
+                        }
+                    }
+                }
+                markers.delete()
+                data.delete()
 
                 if (!this.compositeTextures[i]) {
                     const comp = this.c.createTexture();
                     this.compositeTextures[i] = this.checkError(comp);
                 }
                 this.c.bindTexture(this.c.TEXTURE_2D, this.compositeTextures[i]);
-                this.c.texImage2D(this.c.TEXTURE_2D, 0, this.c.RGBA, data.cols, data.rows, 0, this.c.RGBA, this.c.UNSIGNED_BYTE, paint);
                 this.textureConfigureNPOT()
-
-                data.delete()
-                markers.delete()
+                this.c.texImage2D(this.c.TEXTURE_2D, 0, this.c.RGBA, w, h, 0, this.c.RGBA, this.c.UNSIGNED_BYTE, readback);
+                
+                this.c.bindFramebuffer(this.c.FRAMEBUFFER, null)
+                this.c.viewport(0, 0, this.c.canvas.width, this.c.canvas.height);
             } catch (e) {
                 convertMaybeCVError(e)
             }
-
-            this.cacheComp[i] = this.images[i].src.substring(0, 100) + this.segmentationType + this.detectorType;
+            this.cacheComp[i] = this.cacheCompKey(i);
         }
+    }
+
+    private cacheCompKey(i: number) {
+        return this.images[i].src.substring(0, 100) + this.segmentationType + this.detectorType
     }
 
     private cacheKey(i: number) {
@@ -472,7 +530,7 @@ export class Renderer {
             } else {
                 this.cacheSrcs[i] = this.cacheKey(i);
             }
-            
+
             if (this.align) {
                 const good_matches = new cv.DMatchVector();
 
@@ -565,8 +623,8 @@ export class Renderer {
         if (this.selected == -1) {
             this.composite()
             this.renderImage(this.imageTextures[0], 0, false)
-            for (const comp in this.compositeTextures) {
-                this.renderImage(this.compositeTextures[comp], parseInt(comp), false)
+            for (const i in this.images) {
+                this.renderImage(this.compositeTextures[i], parseInt(i), false)
             }
 
         } else if (this.images[this.selected]) {
@@ -615,7 +673,7 @@ export class Renderer {
         this.c.uniform1i(this.uniforms.image, 0);
 
         this.c.activeTexture(this.c.TEXTURE1);
-        this.c.bindTexture(this.c.TEXTURE_2D, this.strokeTextures[i]);
+        this.c.bindTexture(this.c.TEXTURE_2D, renderPaint ? this.strokeTextures[i] : this.strokeTextures[0]/* empty one */);
         this.c.uniform1i(this.uniforms.paint, 1);
         if (renderPaint) {
             this.c.uniform3f(this.uniforms.paintColor, this.paintColor[0], this.paintColor[1], this.paintColor[2]);

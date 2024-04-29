@@ -1,20 +1,26 @@
 <template>
     <main ref="main">
-        <canvas ref="canvas" class="absolute-canvas" @mousemove="paint" @touchmove="(e) => paint(e.touches[0])"
-            @mousedown="(e) => (isDown = true, prevPos = [e.clientX, e.clientY])" @mouseup="isDown = false"
+        <canvas ref="canvas" class="absolute" @mousemove="paint" @touchmove="(e) => paint(e.touches[0])"
+            @mousedown="(e) => (isDown = true, prevPos = [e.clientX, e.clientY])" @mouseup="paintEnd"
             @touchstart="(e) => (isDown = true, prevPos = [e.touches[0].clientX, e.touches[0].clientY])"
-            @touchend="isDown = false" @touchcancel="isDown = false"></canvas>
-        <canvas v-if="showDebug" ref="debug" class="absolute-canvas"></canvas>
-        <img :src="resultImage" :width="selectedResult == ResultType.Split ? '50%' : 0" />
+            @touchend="paintEnd" @touchcancel="paintEnd"></canvas>
+        <canvas v-if="showDebug" ref="debug" class="absolute" style="top:50%"></canvas>
+        <img :src="resultImage" :width="selectedResult == ResultType.Split ? '50%' : 0" style="left:50%"
+            class="absolute">
+        <div class="overlay" v-show="computing" style="background: gray"></div>
+        <Icon class="absolute" icon="mdi:magic-staff" style="top:50%;left:50%;transform:translate(-50%,-50%);"
+            v-show="computing" size="64" />
     </main>
 </template>
 
 <script setup lang="ts">
-import { onMounted, watch, ref, onBeforeUnmount, shallowRef, computed, nextTick } from 'vue';
+import { onMounted, watch, ref, onBeforeUnmount, shallowRef, computed } from 'vue';
 import { useState, ResultType } from '../state';
 import { storeToRefs } from 'pinia';
 import { Renderer } from '../render';
 import cvLib from '@techstark/opencv-js'
+import { Icon } from '@iconify/vue/dist/iconify.js';
+import debounce from 'debounce';
 
 const state = useState();
 const { eraser, images, paintOpacity, enableAlignment,
@@ -112,6 +118,7 @@ watch(debug, (d) => {
     renderer.value.debugCanvas = d
     render()
 })
+const renderCooldown = debounce(() => renderResult(), 1000)
 
 function paint(event: MouseEvent | Touch) {
     if (!renderer.value || !isDown.value) {
@@ -121,6 +128,13 @@ function paint(event: MouseEvent | Touch) {
     const rect = canvas.value!.getBoundingClientRect();
     renderer.value.paint(prevPos[0] - rect.left, prevPos[1] - rect.top, event.clientX - rect.left, event.clientY - rect.top, !state.brushForeground);
     prevPos = [event.clientX, event.clientY];
+}
+
+function paintEnd() {
+    isDown.value = false
+    if (selectedResult.value == ResultType.Split) {
+        renderCooldown()
+    }
 }
 
 function passStateToRenderer() {
@@ -243,7 +257,11 @@ watch([selectedResult, selectedImage], async ([newResult, newSelected], [oldResu
         updateCanvasSize(images.value[0])
     }
     if (newResult != ResultType.None) {
-        nextTick(() => renderResult())// also renders the currently selected image if view is split
+        computing.value = true
+        setTimeout(() => {
+            renderResult()
+            computing.value = false
+        }, 1)// also renders the currently selected image if view is split
     } else {
         render();
     }
@@ -254,7 +272,7 @@ function renderResult() {
         return;
     }
     renderer.value.selected = -1
-    render()
+    renderer.value.render()
     if (selectedResult.value == ResultType.Split) {
         // save and show the snapshot
         renderer.value.c.finish()
@@ -288,13 +306,9 @@ main {
     position: relative;
 }
 
-.absolute-canvas {
+.absolute {
     position: absolute;
     top: 0;
     left: 0;
-
-    &:nth-of-type(2) {
-        top: 50%
-    }
 }
 </style>

@@ -18,6 +18,7 @@ void main() {
         discard;
     }
 
-    gl_FragColor = vec4(mix(texture2D(image, coords).rgb, paintColor, texture2D(paint, v_texcoord).r * paintOpacity), 1.0);
-    gl_FragColor.xyz = mix(gl_FragColor.xyz, backPaintColor, texture2D(paint, v_texcoord).g * paintOpacity);
+    vec4 tex = texture2D(image, coords);
+    gl_FragColor = vec4(mix(tex.rgb, paintColor, texture2D(paint, coords).r * paintOpacity), tex.a);
+    gl_FragColor.xyz = mix(gl_FragColor.xyz, backPaintColor, texture2D(paint, coords).g * paintOpacity);
 }

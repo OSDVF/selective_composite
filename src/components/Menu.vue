@@ -29,12 +29,10 @@
                 @click="brushForeground = true; eraser = false" :disabled="selectedImage == 0">
                 <Icon icon="mdi:brush" />
             </button>
-            <template v-if="selectedSegmentation != SegmentationType.Watershed">
-                <button title="Background Brush" :class="{ selected: !brushForeground }"
-                    @click="brushForeground = false; eraser = false" :disabled="selectedImage == 0">
-                    <Icon icon="mdi:brush-variant" />
-                </button>
-            </template>
+            <button title="Background Brush" :class="{ selected: !brushForeground }"
+                @click="brushForeground = false; eraser = false" :disabled="selectedImage == 0">
+                <Icon icon="mdi:brush-variant" />
+            </button>
             <button title="Eraser" :class="{ selected: eraser }" @click="eraser = !eraser"
                 @dblclick="brushForeground ? emit('clearForeground') : emit('clearBackground')"
                 :disabled="selectedImage == 0">
@@ -53,7 +51,8 @@
         </div>
 
         <ImageButton :title="index == 0 ? `Baseline: ${basename(image.name)}` : `${basename(image.name)}`"
-            v-for="(image, index) in images" :image="image" @select="selectedImage = index"
+            v-for="(image, index) in images" :image="image"
+            @select="selectedImage = index; selectedResult = selectedResult == ResultType.Full ? ResultType.None : selectedResult"
             @remove="state.removeImage(index); selectedImage = selectedImage == index ? 0 : index"
             :color="index > 0 ? colors[index] : 'transparent'" :class="{ selected: selectedImage == index }" />
 
@@ -94,11 +93,13 @@
             </button>
 
             <template v-if="drawKeypoints">
-                <input type="range" min=".1" step=".1" max="16" v-model.number="pointSizeLin" title="Drawn Keypoint Scale">
+                <input type="range" min=".1" step=".1" max="16" v-model.number="pointSizeLin"
+                    title="Drawn Keypoint Scale">
                 <Icon icon="mdi:circle-outline" />
                 <input type="number" class="no-border menu-input" min="1" v-model.number="pointSizeLin"
                     title="Drawn Keypoint Scale" />
-                <input type="range" min="1" step="1" max="16" v-model.number="pointSizeExp" title="Scale Exponential Base">
+                <input type="range" min="1" step="1" max="16" v-model.number="pointSizeExp"
+                    title="Scale Exponential Base">
                 <Icon icon="mdi:exponent" />
                 <input type="number" class="no-border menu-input" min="1" v-model.number="pointSizeExp"
                     title="Scale Exponential Base" />
