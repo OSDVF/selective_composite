@@ -1,6 +1,6 @@
 <template>
     <aside>
-        <button title="Save">
+        <button title="Save" @click="emit('save')">
             <Icon icon="material-symbols:save" />
         </button>
         <button title="Add Image" @click="input.click()">
@@ -121,6 +121,7 @@ import { DetectorType, SegmentationType } from '../render';
 
 const emit = defineEmits<{
     redraw: [],
+    save: [],
     clearForeground: [],
     clearBackground: [],
 }>()

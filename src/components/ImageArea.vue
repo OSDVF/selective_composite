@@ -51,10 +51,47 @@ let renderer = shallowRef<Renderer | null>(null)
 let observer = shallowRef<ResizeObserver | null>(null)
 
 defineExpose({
-    render,
     clearForeground,
-    clearBackground
+    clearBackground,
+    render,
+    save,
 })
+
+function save() {
+    if (!renderer.value || !canvas.value || !images.value[0]) {
+        return
+    }
+    canvas.value.width = images.value[0].naturalWidth
+    canvas.value.height = images.value[0].naturalHeight
+
+    computing.value = true
+    setTimeout(() => {
+        let error
+        const prev = renderer.value!.visualizeSegments
+        renderer.value!.visualizeSegments = 0.
+        try {
+            renderResult(true)
+            const link = document.createElement("a")
+            link.href = resultImage.value!
+            link.target = '_blank'
+            link.click()
+            link.remove()
+        } catch (e) {
+            error = e
+        }
+        computing.value = false
+        // Render the previous view
+        renderer.value!.visualizeSegments = prev
+        updateCanvasSize(images.value[0])
+        if(selectedResult.value == ResultType.None) {
+            renderer.value!.render()
+        } else {
+            renderResult()
+        }
+        if (error) throw error
+    }, 1)
+
+}
 
 function render() {
     requestAnimationFrame(() =>
@@ -100,7 +137,7 @@ watch(paintOpacity, (opacity) => {
     if (!renderer.value) return
     renderer.value.setPaintOpacity(opacity)
     render()
-    if(selectedResult.value != ResultType.None) {
+    if (selectedResult.value != ResultType.None) {
         renderResult()
     }
 })
@@ -125,7 +162,9 @@ watch(debug, (d) => {
 watch(showParts, (p) => {
     if (!renderer.value) return
     renderer.value.visualizeSegments = p ? 0.5 : 0
-    renderResult()
+    if(selectedResult.value != ResultType.None) {
+        renderResult()
+    }
 })
 const renderCooldown = debounce(() => renderResult(), 1000)
 
@@ -294,13 +333,13 @@ watch([selectedResult, selectedImage], async ([newResult, newSelected], [oldResu
     }
 })
 
-function renderResult() {
+function renderResult(save: boolean = false) {
     if (!renderer.value) {
         return;
     }
     renderer.value.selected = -1
     renderer.value.render()
-    if (selectedResult.value == ResultType.Split) {
+    if (selectedResult.value == ResultType.Split || save) {
         // save and show the snapshot
         renderer.value.c.finish()
         resultImage.value = canvas.value?.toDataURL()

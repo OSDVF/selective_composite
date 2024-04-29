@@ -296,8 +296,14 @@ export class Renderer {
         }
         delete this.cacheComp[this.selected]
         const proj = this.projections[this.selected]
-        const canvasScaleX = this.images[this.selected].naturalWidth / this.c.canvas.width;
-        const canvasScaleY = this.images[this.selected].naturalHeight / this.c.canvas.height;
+        const selIm = this.images[this.selected]
+        const width = Math.min(selIm.naturalWidth, this.detectorOptions.widthLimit ?? selIm.naturalWidth);
+        const scale = (width / selIm.naturalWidth);
+        const height = selIm.naturalHeight * scale;
+        
+        const canvasScaleX = width / this.c.canvas.width;
+        const canvasScaleY = height / this.c.canvas.height;
+
         const from = vec3.fromValues(fromX * canvasScaleX, fromY * canvasScaleY, 1.)
         const to = vec3.fromValues(toX * canvasScaleX, toY * canvasScaleY, 1.)
         if (proj) {
@@ -307,10 +313,14 @@ export class Renderer {
             vec3.transformMat3(from, from, proj)
             vec3.transformMat3(to, to, proj)
 
-            from[0] /= from[2]
-            from[1] /= from[2]
-            to[0] /= to[2]
-            to[1] /= to[2]
+            from[0] /= width * from[2]
+            from[1] /= height * from[2]
+            to[0] /= width * to[2]
+            to[1] /= height * to[2]
+            from[0] *= selIm.naturalWidth
+            from[1] *= selIm.naturalHeight
+            to[0] *= selIm.naturalWidth
+            to[1] *= selIm.naturalHeight
         }
 
         this.c.bindFramebuffer(this.c.FRAMEBUFFER, this.buffers.paint);
@@ -320,7 +330,7 @@ export class Renderer {
             this.strokeTextures[this.selected], 0
         );
         this.checkError();
-        this.c.viewport(0, 0, this.images[this.selected].naturalWidth, this.images[this.selected].naturalHeight);
+        this.c.viewport(0, 0, selIm.naturalWidth, selIm.naturalHeight);
         this.c.useProgram(this.programs.paint);
         this.c.bindBuffer(this.c.ARRAY_BUFFER, this.buffers.fullScreenQuad);
         this.c.enableVertexAttribArray(this.attribs.position);
