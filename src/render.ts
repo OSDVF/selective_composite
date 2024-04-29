@@ -91,6 +91,7 @@ export class Renderer {
     selected: number = -1;
     paintColor: number[] = [0, 0, 0];
     backPaintColor: number[] = [0, 0, 0];
+    visualizeSegments = 0.;
     erase = false;
 
     keypoints: cv.KeyPointVector[] = [];
@@ -344,7 +345,7 @@ export class Renderer {
     }
 
     composite() {
-        for (let i = 0; i < this.images.length; i++) {
+        for (let i = 1; i < this.images.length; i++) {
             if (this.cacheComp[i] == this.cacheCompKey(i)) {
                 continue
             }
@@ -426,7 +427,7 @@ export class Renderer {
                 this.c.bindTexture(this.c.TEXTURE_2D, this.compositeTextures[i]);
                 this.textureConfigureNPOT()
                 this.c.texImage2D(this.c.TEXTURE_2D, 0, this.c.RGBA, w, h, 0, this.c.RGBA, this.c.UNSIGNED_BYTE, readback);
-                
+
                 this.c.bindFramebuffer(this.c.FRAMEBUFFER, null)
                 this.c.viewport(0, 0, this.c.canvas.width, this.c.canvas.height);
             } catch (e) {
@@ -501,7 +502,7 @@ export class Renderer {
                         this.imageTextures[i] = this.checkError(imTex);
 
                         // create render target for painting
-                        if (!this.strokeTextures[i] && (import.meta.hot || i != 0)) {
+                        if (!this.strokeTextures[i] && (import.meta.env.DEV || i != 0)) {
                             const paint = this.c.createTexture();
                             this.strokeTextures[i] = this.checkError(paint);
                             this.c.bindTexture(this.c.TEXTURE_2D, paint);
@@ -623,8 +624,8 @@ export class Renderer {
         if (this.selected == -1) {
             this.composite()
             this.renderImage(this.imageTextures[0], 0, false)
-            for (const i in this.images) {
-                this.renderImage(this.compositeTextures[i], parseInt(i), false)
+            for (let i = 1; i < this.images.length; i++) {
+                this.renderImage(this.compositeTextures[i], i, false)
             }
 
         } else if (this.images[this.selected]) {
@@ -673,14 +674,17 @@ export class Renderer {
         this.c.uniform1i(this.uniforms.image, 0);
 
         this.c.activeTexture(this.c.TEXTURE1);
-        this.c.bindTexture(this.c.TEXTURE_2D, renderPaint ? this.strokeTextures[i] : this.strokeTextures[0]/* empty one */);
+        this.c.bindTexture(this.c.TEXTURE_2D, renderPaint || this.visualizeSegments > 0. ? this.strokeTextures[i] : this.strokeTextures[0]/* empty one */);
         this.c.uniform1i(this.uniforms.paint, 1);
         if (renderPaint) {
-            this.c.uniform3f(this.uniforms.paintColor, this.paintColor[0], this.paintColor[1], this.paintColor[2]);
-            this.c.uniform3f(this.uniforms.backPaintColor, this.backPaintColor[0], this.backPaintColor[1], this.backPaintColor[2]);
+            this.c.uniform4f(this.uniforms.paintColor, this.paintColor[0], this.paintColor[1], this.paintColor[2], 0.);
+            this.c.uniform4f(this.uniforms.backPaintColor, this.backPaintColor[0], this.backPaintColor[1], this.backPaintColor[2], 0.);
+        } else if (this.visualizeSegments > 0. && i > 0) {
+            this.c.uniform4f(this.uniforms.paintColor, this.paintColor[0], this.paintColor[1], this.paintColor[2], this.visualizeSegments);
+            this.c.uniform4f(this.uniforms.backPaintColor, this.backPaintColor[0], this.backPaintColor[1], this.backPaintColor[2], 0.);
         } else {
-            this.c.uniform3f(this.uniforms.paintColor, 0, 0, 0);
-            this.c.uniform3f(this.uniforms.backPaintColor, 0, 0, 0);
+            this.c.uniform4f(this.uniforms.paintColor, 0, 0, 0, 0);
+            this.c.uniform4f(this.uniforms.backPaintColor, 0, 0, 0, 0);
         }
 
         // compute the dimensions used for the computation

@@ -20,6 +20,9 @@
             @click="selectedResult = selectedResult == ResultType.Split ? ResultType.None : ResultType.Split">
             <Icon icon="fluent:layout-column-two-24-regular" />
         </button>
+        <button title="Color Source Segments" :class="{ selected: showParts}" @click="showParts = !showParts">
+            <Icon icon="mdi:invert-colors" />
+        </button>
 
         <div :style="{
             visibility: selectedImage != 0 ? 'visible' : 'hidden'
@@ -125,9 +128,9 @@ const emit = defineEmits<{
 const state = useState()
 const { brushForeground, brushSize, eraser, enableAlignment, images, paintOpacity, pointSizeLin, pointSizeExp,
     selectedImage, selectedResult, selectedDetector, selectedSegmentation,
-    colors, detectorOptions, drawKeypoints, showDebug
+    colors, detectorOptions, drawKeypoints, showDebug, showParts
 } = storeToRefs(state)
-const isDebug = import.meta.env.NODE_ENV != 'production'
+const isDebug = import.meta.env.DEV
 
 const input = document.createElement('input');
 input.type = 'file';

@@ -1,0 +1,28 @@
+{
+    "hosting": {
+      "public": "dist",
+      "cleanUrls": true,
+      "rewrites": [
+        {
+          "source": "**",
+          "destination": "/index.html"
+        }
+      ],
+      "ignore": [
+        "firebase.json",
+        "**/.*",
+        "**/node_modules/**"
+      ],
+      "headers": [
+        {
+          "source": "/clear",
+          "headers": [
+            {
+              "key": "Clear-Site-Data",
+              "value": "\"cache\", \"cookies\", \"storage\", \"executionContexts\""
+            }
+          ]
+        }
+      ]
+    }
+  }

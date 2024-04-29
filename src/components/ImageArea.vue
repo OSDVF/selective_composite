@@ -25,7 +25,7 @@ import debounce from 'debounce';
 const state = useState();
 const { eraser, images, paintOpacity, enableAlignment,
     selectedDetector, selectedImage, selectedResult, selectedSegmentation, computing, detectorOptions,
-    initialized, brushSize, drawKeypoints, showDebug, pointSizeLin, pointSizeExp
+    initialized, brushSize, drawKeypoints, showDebug, showParts, pointSizeLin, pointSizeExp
 } = storeToRefs(state);
 const cv = new Promise<void>((resolve) => {
     cvLib.onRuntimeInitialized = () => {
@@ -79,6 +79,7 @@ watch(selectedColor, (newColor) => {
         return;
     }
     renderer.value.paintColor = newColor.map(a => a / 255)
+    renderer.value.backPaintColor = renderer.value.paintColor.map(a => (1 - a) * 0.4)
 })
 watch(brushSize, (newSize) => {
     if (!renderer.value) {
@@ -99,6 +100,9 @@ watch(paintOpacity, (opacity) => {
     if (!renderer.value) return
     renderer.value.setPaintOpacity(opacity)
     render()
+    if(selectedResult.value != ResultType.None) {
+        renderResult()
+    }
 })
 watch([pointSizeLin, pointSizeExp], ([lin, exp]) => {
     if (!renderer.value) return
@@ -117,6 +121,11 @@ watch(debug, (d) => {
     if (!renderer.value) return
     renderer.value.debugCanvas = d
     render()
+})
+watch(showParts, (p) => {
+    if (!renderer.value) return
+    renderer.value.visualizeSegments = p ? 0.5 : 0
+    renderResult()
 })
 const renderCooldown = debounce(() => renderResult(), 1000)
 
@@ -146,6 +155,8 @@ function passStateToRenderer() {
     renderer.value!.detectorOptions = detectorOptions.value;
     renderer.value!.drawKeypoints = drawKeypoints.value
     renderer.value!.paintColor = selectedColor.value.map(a => a / 255);
+    renderer.value!.visualizeSegments = showParts.value ? 0.5 : 0;
+    renderer.value!.backPaintColor = renderer.value!.paintColor.map(a => (1 - a) * 0.4)
     renderer.value!.erase = eraser.value
     renderer.value!.segmentationType = selectedSegmentation.value
     renderer.value!.setPaintOpacity(paintOpacity.value)
@@ -239,8 +250,14 @@ watch(images, async (newImages, oldImages) => {
         setTimeout(() => {
             renderer.value!.selected = selectedImage.value;
             renderer.value!.updateImages();
-            render()
+            let error
+            try {
+                render()
+            } catch (e) {
+                error = e
+            }
             computing.value = false
+            if (error) throw error
         }, 1)
     } else {
         renderer.value!.clear()
@@ -253,17 +270,27 @@ watch([selectedResult, selectedImage], async ([newResult, newSelected], [oldResu
     }
     if (!initialized.value) await cv
     renderer.value.selected = newSelected
-    if (oldResult != newResult && images.value) {
-        updateCanvasSize(images.value[0])
-    }
-    if (newResult != ResultType.None) {
-        computing.value = true
-        setTimeout(() => {
-            renderResult()
-            computing.value = false
-        }, 1)// also renders the currently selected image if view is split
+    if (oldResult != newResult) {
+        if (images.value) {
+            updateCanvasSize(images.value[0])
+        }
+        if (newResult != ResultType.None) {
+            computing.value = true
+            setTimeout(() => {
+                let error
+                try {
+                    renderResult()
+                } catch (e) {
+                    error = e
+                }
+                computing.value = false
+                if (error) throw error
+            }, 1)// also renders the currently selected image if view is split
+        } else {
+            render()
+        }
     } else {
-        render();
+        render()
     }
 })
 

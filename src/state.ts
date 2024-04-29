@@ -19,6 +19,7 @@ export const useState = defineStore('state', () => {
     const selectedResult = ref(ResultType.None)
     const selectedDetector = usePersistentRef("detector", DetectorType.AKAZE)
     const selectedSegmentation = usePersistentRef("segmentation", SegmentationType.Watershed)
+    const showParts = usePersistentRef("parts", false)
     const showDebug = usePersistentRef("debug", false)
     const colors = computed(() => images.value.map((img, i) => stc(img.src.substring(0, 50) + i.toString())))
     // foreground/background selector
@@ -71,6 +72,7 @@ export const useState = defineStore('state', () => {
         selectedImage,
         selectedResult,
         selectedSegmentation,
+        showParts,
         showDebug,
         addImage,
         removeImage
