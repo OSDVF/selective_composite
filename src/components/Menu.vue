@@ -6,12 +6,6 @@
         <button title="Add Image" @click="input.click()">
             <Icon icon="mdi:plus-circle" />
         </button>
-        <select v-model="selectedSegmentation"
-            :title="`Selected segmentation algorithm: ${SegmentationType[selectedSegmentation]}`">
-            <option v-for="option in [SegmentationType.Watershed]" :title="SegmentationType[option]" :value="option">
-                {{ SegmentationType[option] }}
-            </option>
-        </select>
         <button title="Result" :class="{ selected: selectedResult == ResultType.Full }"
             @click="selectedResult = selectedResult == ResultType.Full ? ResultType.None : ResultType.Full">
             <Icon icon="mdi:check-bold" />
@@ -20,9 +14,18 @@
             @click="selectedResult = selectedResult == ResultType.Split ? ResultType.None : ResultType.Split">
             <Icon icon="fluent:layout-column-two-24-regular" />
         </button>
-        <button title="Color Source Segments" :class="{ selected: showParts}" @click="showParts = !showParts">
+        <button title="Color Source Segments" :class="{ selected: showParts }" @click="showParts = !showParts"
+            style="text-wrap: nowrap;">
+            <Icon icon="mdi:identifier" />
             <Icon icon="mdi:invert-colors" />
         </button>
+        <select v-model="selectedSegmentation"
+            :title="`Selected segmentation algorithm: ${SegmentationType[selectedSegmentation]}`">
+            <option v-for="option in [SegmentationType.Watershed]" :title="SegmentationType[option]" :value="option">
+                {{ SegmentationType[option] }}
+            </option>
+        </select>
+        <hr>
 
         <div :style="{
             visibility: selectedImage != 0 ? 'visible' : 'hidden'
@@ -37,38 +40,41 @@
                 <Icon icon="mdi:brush-variant" />
             </button>
             <button title="Eraser" :class="{ selected: eraser }" @click="eraser = !eraser"
-                @dblclick="brushForeground ? emit('clearForeground') : emit('clearBackground')"
+                @dblclick="brushForeground ? emit('clearForeground') : emit('clearBackground'); eraser = false"
                 :disabled="selectedImage == 0">
                 <Icon icon="mdi:eraser" />
             </button>
-            <input type="range" min=".1" max="1" step=".1" v-model.number="paintOpacity" title="Paint Opacity">
-            <Icon icon="mdi:opacity" />
+            <input type="range" min=".1" max="1" step=".1" v-model.number="paintOpacity" title="Paint Opacity"
+                :style="{ filter: `grayscale(${1 - paintOpacity})`, color: colors[selectedImage] }">
+            <Icon icon="mdi:opacity" :color="colors[selectedImage]"
+                :style="{ filter: `grayscale(${1 - paintOpacity})` }" />
             <input type="number" class="no-arrows no-border menu-input" min="0" v-model.number="paintOpacity"
                 title="Paint Opacity">
 
             <input type="range" title="Brush Radius" v-model.number="brushSize"
                 :max="images.length ? (images[0].naturalWidth / 10) : 2" min="1">
-            <Icon icon="mdi:arrow-left-right" />
+            <Icon icon="mdi:radius" />
             <input type="number" title="Brush Radius" class="no-arrows no-border menu-input" v-model.number="brushSize"
                 min="1">
         </div>
+        <hr>
 
         <ImageButton :title="index == 0 ? `Baseline: ${basename(image.name)}` : `${basename(image.name)}`"
             v-for="(image, index) in images" :image="image"
             @select="selectedImage = index; selectedResult = selectedResult == ResultType.Full ? ResultType.None : selectedResult"
             @remove="state.removeImage(index); selectedImage = selectedImage == index ? 0 : index"
             :color="index > 0 ? colors[index] : 'transparent'" :class="{ selected: selectedImage == index }" />
-
+        <hr>
         <div style="flex-grow: 1;">
             <div v-if="isDebug">
-                <input type="checkbox" v-model="showDebug" id="showDebug"><label for="showDebug">Dbg</label>
+                <input type="checkbox" v-model="showDebug" id="showDebug"><label for="showDebug">DBG</label>
 
                 <button @click="emit('redraw')" title="Render">
                     <Icon icon="mdi:reload" />
                 </button>
             </div>
 
-            <input type="checkbox" v-model="enableAlignment" id="alignment"><label for="alignment">Align</label>
+            <input type="checkbox" v-model="enableAlignment" id="alignment"><label for="alignment">ALIGN</label>
             <select v-model="selectedDetector"
                 :title="`Detector Type ${images.length == 0 ? '' : '(Not available when images added)'}`"
                 :disabled="images.length != 0">
@@ -167,6 +173,14 @@ aside {
         width: 100%;
         display: inline-block;
     }
+
+    hr {
+        margin: .1rem 0
+    }
+
+    label {
+        font-size: .8rem
+    }
 }
 
 .selected:not(:disabled) {
@@ -180,5 +194,9 @@ aside {
 input[type="range"] {
     width: 100%;
     margin: 0;
+
+    &::-moz-range-progress {
+        background-color: currentColor;
+    }
 }
 </style>

@@ -1,9 +1,9 @@
 <template>
     <main ref="main">
         <canvas ref="canvas" class="absolute" @mousemove="paint" @touchmove="(e) => paint(e.touches[0])"
-            @mousedown="(e) => (isDown = true, prevPos = [e.clientX, e.clientY])" @mouseup="paintEnd"
-            @touchstart="(e) => (isDown = true, prevPos = [e.touches[0].clientX, e.touches[0].clientY])"
-            @touchend="paintEnd" @touchcancel="paintEnd"></canvas>
+            @mousedown="(e) => (isDown = true, prevPos = startPos = [e.clientX, e.clientY])" @mouseup="(e)=>paintEnd(e)"
+            @touchstart="(e) => (isDown = true, prevPos = startPos = [e.touches[0].clientX, e.touches[0].clientY])"
+            @touchend="(e)=>paintEnd(e.touches[0])" @touchcancel="(e)=>paintEnd(e.touches[0])"></canvas>
         <canvas v-if="showDebug" ref="debug" class="absolute" style="top:50%"></canvas>
         <img :src="resultImage" :width="selectedResult == ResultType.Split ? '50%' : 0" style="left:50%"
             class="absolute">
@@ -41,6 +41,7 @@ const cv = new Promise<void>((resolve) => {
 // painting state
 const isDown = ref(false);
 let prevPos = [0, 0]
+let startPos = [0, 0]
 
 const canvas = ref<HTMLCanvasElement | null>(null);
 const debug = ref<HTMLCanvasElement | null>(null);
@@ -174,12 +175,19 @@ function paint(event: MouseEvent | Touch) {
     }
 
     const rect = canvas.value!.getBoundingClientRect();
-    renderer.value.paint(prevPos[0] - rect.left, prevPos[1] - rect.top, event.clientX - rect.left, event.clientY - rect.top, !state.brushForeground);
+    const from = [prevPos[0] - rect.left, prevPos[1] - rect.top]
+    const to = [event.clientX - rect.left, event.clientY - rect.top]
+    renderer.value.paint(from[0], from[1], to[0], to[1], !state.brushForeground);
     prevPos = [event.clientX, event.clientY];
 }
 
-function paintEnd() {
+function paintEnd(event: MouseEvent | Touch) {
     isDown.value = false
+    if(startPos[0] == event.clientX && startPos[1] == event.clientY) {
+        // single click
+        const rect = canvas.value!.getBoundingClientRect();
+        renderer.value?.paint(startPos[0] - rect.top, startPos[1] - rect.left, startPos[0] - rect.top + 1, startPos[1] - rect.left + 1, !state.brushForeground)
+    }
     if (selectedResult.value == ResultType.Split) {
         renderCooldown()
     }

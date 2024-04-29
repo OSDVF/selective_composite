@@ -297,9 +297,8 @@ export class Renderer {
         delete this.cacheComp[this.selected]
         const proj = this.projections[this.selected]
         const selIm = this.images[this.selected]
-        const width = Math.min(selIm.naturalWidth, this.detectorOptions.widthLimit ?? selIm.naturalWidth);
-        const scale = (width / selIm.naturalWidth);
-        const height = selIm.naturalHeight * scale;
+
+        const [width, height] = this.sizeForCompositing(this.selected)
         
         const canvasScaleX = width / this.c.canvas.width;
         const canvasScaleY = height / this.c.canvas.height;
@@ -313,15 +312,16 @@ export class Renderer {
             vec3.transformMat3(from, from, proj)
             vec3.transformMat3(to, to, proj)
 
-            from[0] /= width * from[2]
-            from[1] /= height * from[2]
-            to[0] /= width * to[2]
-            to[1] /= height * to[2]
-            from[0] *= selIm.naturalWidth
-            from[1] *= selIm.naturalHeight
-            to[0] *= selIm.naturalWidth
-            to[1] *= selIm.naturalHeight
+            from[0] /= from[2]
+            from[1] /= from[2]
+            to[0] /= to[2]
+            to[1] /= to[2]
         }
+
+        from[0] *= selIm.naturalWidth / width
+        from[1] *= selIm.naturalHeight / height
+        to[0] *= selIm.naturalWidth / width
+        to[1] *= selIm.naturalHeight / height
 
         this.c.bindFramebuffer(this.c.FRAMEBUFFER, this.buffers.paint);
         this.c.framebufferTexture2D(this.c.FRAMEBUFFER,
@@ -342,7 +342,9 @@ export class Renderer {
         this.c.uniform2f(this.uniforms.position, to[0], to[1]);
         this.c.uniform1f(this.uniforms.value, this.erase ? 0 : 1);
         this.c.uniform1i(this.uniforms.back, background ? 1 : 0);
+        this.c.colorMask(!background, background, true, true);
         this.c.drawArrays(this.c.TRIANGLES, 0, 6);
+        this.c.colorMask(true, true, true, true);
 
         this.render()
     }
@@ -664,6 +666,14 @@ export class Renderer {
         this.checkError()
     }
 
+    /** Returns the dimensions used for the alignment computation */
+    private sizeForCompositing(i: number) {
+        const selIm = this.images[i]
+        const width = Math.min(selIm.naturalWidth, this.detectorOptions.widthLimit ?? selIm.naturalWidth);
+        const height = selIm.naturalHeight * (width / selIm.naturalWidth);
+        return [width, height]
+    }
+
     private useImageProgram() {
         this.c.useProgram(this.programs.image);
         this.checkError()
@@ -697,10 +707,7 @@ export class Renderer {
             this.c.uniform4f(this.uniforms.backPaintColor, 0, 0, 0, 0);
         }
 
-        // compute the dimensions used for the computation
-        const width = Math.min(this.images[i].naturalWidth, this.detectorOptions.widthLimit ?? this.images[i].naturalWidth);
-        const scale = (width / this.images[i].naturalWidth);
-        const height = this.images[i].naturalHeight * scale;
+        const [width, height] = this.sizeForCompositing(i)
         this.c.uniform2f(this.uniforms.size, width, height);
 
         const m = this.projections[i]
