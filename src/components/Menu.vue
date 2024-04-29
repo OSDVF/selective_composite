@@ -6,6 +6,7 @@
         <button title="Add Image" @click="input.click()">
             <Icon icon="mdi:plus-circle" />
         </button>
+        <hr>
         <button title="Result" :class="{ selected: selectedResult == ResultType.Full }"
             @click="selectedResult = selectedResult == ResultType.Full ? ResultType.None : ResultType.Full">
             <Icon icon="mdi:check-bold" />
@@ -14,7 +15,7 @@
             @click="selectedResult = selectedResult == ResultType.Split ? ResultType.None : ResultType.Split">
             <Icon icon="fluent:layout-column-two-24-regular" />
         </button>
-        <button title="Color Source Segments" :class="{ selected: showParts }" @click="showParts = !showParts"
+        <button title="Color Source Segments" :class="{ selected: showParts }" @click="showParts = !showParts" :disabled="selectedResult == ResultType.None"
             style="text-wrap: nowrap;">
             <Icon icon="mdi:identifier" />
             <Icon icon="mdi:invert-colors" />
@@ -75,43 +76,46 @@
             </div>
 
             <input type="checkbox" v-model="enableAlignment" id="alignment"><label for="alignment">ALIGN</label>
-            <select v-model="selectedDetector"
-                :title="`Detector Type ${images.length == 0 ? '' : '(Not available when images added)'}`"
-                :disabled="images.length != 0">
-                <option :value="value" v-for="value in [DetectorType.AKAZE, DetectorType.ORB]"
-                    :title="DetectorType[value]">
-                    {{ DetectorType[value] }}
-                </option>
-            </select>
-            <template v-if="selectedDetector != DetectorType.AKAZE">
-                <Icon icon="mdi:scatter-plot-outline" />
-                <input type="number" class="no-arrows no-border menu-input" v-model.number="detectorOptions.maxFeatures"
-                    title="Max number of features to detect" />
-                <Icon icon="mdi:razor-single-edge" />
-                <input type="number" class="no-arrows no-border menu-input"
-                    v-model.number="detectorOptions.edgeThreshold" title="Max number of features to detect" />
-            </template>
-            <Icon icon="mdi:arrow-left-right" />
-            <input type="number" class="no-arrows no-border menu-input" v-model.number="detectorOptions.widthLimit"
-                title="Image width limit for detector" :disabled="images.length != 0" />
-            <Icon icon="mdi:arrow-all" />
-            <input type="number" class="no-arrows no-border menu-input" v-model.number="detectorOptions.knnDistance"
-                title="Maximum distance of a good match" />
-            <button :class="{ selected: drawKeypoints }" @click="drawKeypoints = !drawKeypoints" title="Draw Keypoints">
-                <Icon icon="mdi:scatter-plot" />
-            </button>
+            <template v-if="enableAlignment">
+                <select v-model="selectedDetector"
+                    :title="`Detector Type ${images.length == 0 ? '' : '(Not available when images added)'}`"
+                    :disabled="images.length != 0">
+                    <option :value="value" v-for="value in [DetectorType.AKAZE, DetectorType.ORB]"
+                        :title="DetectorType[value]">
+                        {{ DetectorType[value] }}
+                    </option>
+                </select>
+                <template v-if="selectedDetector != DetectorType.AKAZE">
+                    <Icon icon="mdi:scatter-plot-outline" />
+                    <input type="number" class="no-arrows no-border menu-input"
+                        v-model.number="detectorOptions.maxFeatures" title="Max number of features to detect" />
+                    <Icon icon="mdi:razor-single-edge" />
+                    <input type="number" class="no-arrows no-border menu-input"
+                        v-model.number="detectorOptions.edgeThreshold" title="Max number of features to detect" />
+                </template>
+                <Icon icon="mdi:arrow-left-right" />
+                <input type="number" class="no-arrows no-border menu-input" v-model.number="detectorOptions.widthLimit"
+                    title="Image width limit for detector" :disabled="images.length != 0" />
+                <Icon icon="mdi:arrow-all" />
+                <input type="number" class="no-arrows no-border menu-input" v-model.number="detectorOptions.knnDistance"
+                    title="Maximum distance of a good match" />
+                <button :class="{ selected: drawKeypoints }" @click="drawKeypoints = !drawKeypoints"
+                    title="Draw Keypoints">
+                    <Icon icon="mdi:scatter-plot" />
+                </button>
 
-            <template v-if="drawKeypoints">
-                <input type="range" min=".1" step=".1" max="16" v-model.number="pointSizeLin"
-                    title="Drawn Keypoint Scale">
-                <Icon icon="mdi:circle-outline" />
-                <input type="number" class="no-border menu-input" min="1" v-model.number="pointSizeLin"
-                    title="Drawn Keypoint Scale" />
-                <input type="range" min="1" step="1" max="16" v-model.number="pointSizeExp"
-                    title="Scale Exponential Base">
-                <Icon icon="mdi:exponent" />
-                <input type="number" class="no-border menu-input" min="1" v-model.number="pointSizeExp"
-                    title="Scale Exponential Base" />
+                <template v-if="drawKeypoints">
+                    <input type="range" min=".1" step=".1" max="16" v-model.number="pointSizeLin"
+                        title="Drawn Keypoint Scale">
+                    <Icon icon="mdi:circle-outline" />
+                    <input type="number" class="no-border menu-input" min="1" v-model.number="pointSizeLin"
+                        title="Drawn Keypoint Scale" />
+                    <input type="range" min="1" step="1" max="16" v-model.number="pointSizeExp"
+                        title="Scale Exponential Base">
+                    <Icon icon="mdi:exponent" />
+                    <input type="number" class="no-border menu-input" min="1" v-model.number="pointSizeExp"
+                        title="Scale Exponential Base" />
+                </template>
             </template>
         </div>
     </aside>
