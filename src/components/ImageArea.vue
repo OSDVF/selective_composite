@@ -1,9 +1,9 @@
 <template>
     <main ref="main">
         <canvas ref="canvas" class="absolute" @mousemove="paint" @touchmove="(e) => paint(e.touches[0])"
-            @mousedown="(e) => (isDown = true, prevPos = startPos = [e.clientX, e.clientY])" @mouseup="(e)=>paintEnd(e)"
+            @mousedown="(e) => (isDown = true, prevPos = startPos = [e.clientX, e.clientY])" @mouseup="(e) => paintEnd(e)"
             @touchstart="(e) => (isDown = true, prevPos = startPos = [e.touches[0].clientX, e.touches[0].clientY])"
-            @touchend="(e)=>paintEnd(e.touches[0])" @touchcancel="(e)=>paintEnd(e.touches[0])"></canvas>
+            @touchend="(e) => paintEnd(e.touches[0])" @touchcancel="(e) => paintEnd(e.touches[0])"></canvas>
         <canvas v-if="showDebug" ref="debug" class="absolute" style="top:50%"></canvas>
         <img :src="resultImage" :width="selectedResult == ResultType.Split ? '50%' : 0" style="left:50%"
             class="absolute">
@@ -84,7 +84,7 @@ function save() {
         // Render the previous view
         renderer.value!.visualizeSegments = prev
         updateCanvasSize(images.value[0])
-        if(selectedResult.value == ResultType.None) {
+        if (selectedResult.value == ResultType.None) {
             renderer.value!.render()
         } else {
             renderResult()
@@ -163,7 +163,7 @@ watch(debug, (d) => {
 watch(showParts, (p) => {
     if (!renderer.value) return
     renderer.value.visualizeSegments = p ? 0.5 : 0
-    if(selectedResult.value != ResultType.None) {
+    if (selectedResult.value != ResultType.None) {
         renderResult()
     }
 })
@@ -183,10 +183,10 @@ function paint(event: MouseEvent | Touch) {
 
 function paintEnd(event: MouseEvent | Touch) {
     isDown.value = false
-    if(startPos[0] == event.clientX && startPos[1] == event.clientY) {
+    if (startPos[0] == event.clientX && startPos[1] == event.clientY) {
         // single click
         const rect = canvas.value!.getBoundingClientRect();
-        renderer.value?.paint(startPos[0] - rect.top, startPos[1] - rect.left, startPos[0] - rect.top + 1, startPos[1] - rect.left + 1, !state.brushForeground)
+        renderer.value?.paint(startPos[0] - rect.left, startPos[1] - rect.top, startPos[0] - rect.left, startPos[1] - rect.top, !state.brushForeground)
     }
     if (selectedResult.value == ResultType.Split) {
         renderCooldown()
